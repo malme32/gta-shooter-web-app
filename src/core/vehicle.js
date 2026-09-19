@@ -250,7 +250,8 @@ export function runOverDamage(speed) {
  *
  * Damage is dealt once per contact: an entity that keeps overlapping the
  * vehicle is not damaged again until it leaves and re-enters. `vehicle.contacts`
- * tracks the entities touched on the last tick.
+ * tracks the entities touched on the last tick regardless of the current speed,
+ * so slowing below the run-over threshold mid-contact does not re-arm the hit.
  *
  * @param {Vehicle} vehicle
  * @param {ReadonlyArray<{ id?: number|string, kind?: string, x: number, y: number, radius?: number, alive?: boolean }>} [targets]
@@ -266,24 +267,26 @@ export function runOverDamageTick(vehicle, targets = []) {
   const overlapping = new Set();
   const damaged = new Set();
   const hits = [];
+  const reach = Number.isFinite(vehicle.radius) ? vehicle.radius : VEHICLE_RADIUS;
 
-  if (damage > 0) {
-    const reach = Number.isFinite(vehicle.radius) ? vehicle.radius : VEHICLE_RADIUS;
-    for (const target of targets) {
-      if (!target || target === vehicle || target.alive === false || target.kind === 'vehicle') continue;
-      if (!Number.isFinite(target.x) || !Number.isFinite(target.y) || !Number.isFinite(target.health)) continue;
-      const tr = Number.isFinite(target.radius) ? target.radius : 0;
-      const limit = reach + tr;
-      const dx = target.x - vehicle.x;
-      const dy = target.y - vehicle.y;
-      if (dx * dx + dy * dy > limit * limit) continue;
+  for (const target of targets) {
+    if (!target || target === vehicle || target.alive === false || target.kind === 'vehicle') continue;
+    if (!Number.isFinite(target.x) || !Number.isFinite(target.y) || !Number.isFinite(target.health)) continue;
+    const tr = Number.isFinite(target.radius) ? target.radius : 0;
+    const limit = reach + tr;
+    const dx = target.x - vehicle.x;
+    const dy = target.y - vehicle.y;
+    if (dx * dx + dy * dy > limit * limit) continue;
 
-      overlapping.add(target.id);
-      if (damaged.has(target.id) || previous.has(target.id)) continue;
-      damaged.add(target.id);
-      const result = applyBulletDamage(target, damage);
-      hits.push({ target, ...result });
-    }
+    // Contact is tracked whether or not the vehicle is fast enough to hurt the
+    // target, so dropping below the threshold and speeding up again without
+    // parting is still a single contact.
+    overlapping.add(target.id);
+    if (damage <= 0) continue;
+    if (damaged.has(target.id) || previous.has(target.id)) continue;
+    damaged.add(target.id);
+    const result = applyBulletDamage(target, damage);
+    hits.push({ target, ...result });
   }
 
   vehicle.contacts = overlapping;

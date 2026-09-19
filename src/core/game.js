@@ -774,6 +774,15 @@ function detonateVehicle(state, vehicle) {
     victims: boom.hits.map((hit) => hit.target.id),
   });
 
+  // A blast that writes off another vehicle sets it off too, so a pile-up
+  // chain-detonates instead of leaving inert wrecks behind.
+  for (const hit of boom.hits) {
+    const target = hit.target;
+    if (target && target.kind === 'vehicle' && target.alive === false && !target.exploded) {
+      detonateVehicle(state, target);
+    }
+  }
+
   if (wasDriving && state.player && state.player.alive) {
     const position = findExitPosition(state.grid, vehicle, state.player.radius);
     if (position) {

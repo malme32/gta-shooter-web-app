@@ -190,6 +190,24 @@ test('run-over damages a target once per contact and again after re-entry', () =
   assert.equal(runOverDamageTick(vehicle, [target]).length, 1, 're-entering contact should damage again');
 });
 
+test('a contact is remembered across a slow tick and does not re-damage', () => {
+  const vehicle = createVehicle({ x: 320, y: 320, speed: VEHICLE_MAX_SPEED });
+  const target = makeEntity({ x: 320, y: 320 });
+
+  assert.equal(runOverDamageTick(vehicle, [target]).length, 1);
+  const health = target.health;
+
+  // Crawl while still touching: no damage, but the contact must not be lost.
+  vehicle.speed = 10;
+  assert.equal(runOverDamageTick(vehicle, [target]).length, 0);
+  assert.equal(target.health, health);
+
+  // Speed back up without parting: still the same contact, no second hit.
+  vehicle.speed = VEHICLE_MAX_SPEED;
+  assert.equal(runOverDamageTick(vehicle, [target]).length, 0, 'a slow tick must not re-arm the contact');
+  assert.equal(target.health, health);
+});
+
 test('run-over ignores slow vehicles, dead targets and other vehicles', () => {
   const slow = createVehicle({ x: 0, y: 0, speed: 10 });
   const target = makeEntity({ x: 0, y: 0 });
@@ -359,6 +377,33 @@ test('shooting a vehicle to destruction detonates it and damages nearby enemies'
   assert.ok(enemy.health < 100, 'the blast should damage a nearby enemy');
 });
 
+test('a blast that destroys another vehicle chain-detonates it', () => {
+  const map = bordered(30, 30);
+  const ax = 10 * TILE_SIZE;
+  const game = createGame({
+    map,
+    spawn: { x: 5 * TILE_SIZE, y: 5 * TILE_SIZE },
+    vehicles: [
+      { id: 'v1', x: ax, y: 5 * TILE_SIZE },
+      { id: 'v2', x: ax + 40, y: 5 * TILE_SIZE },
+    ],
+  });
+  const [first, second] = game.vehicles;
+  first.health = 10;
+  second.health = 10;
+
+  game.bullets.push(
+    createBullet({ id: 99, x: ax - 8, y: 5 * TILE_SIZE, vx: 600, vy: 0, damage: 50, ttl: 5, owner: 0 }),
+  );
+  update(game);
+
+  const explosions = drainEvents(game).filter((event) => event.type === 'vehicle_explosion');
+  assert.equal(explosions.length, 2, 'both vehicles should detonate');
+  assert.equal(first.exploded, true);
+  assert.equal(second.exploded, true);
+  assert.equal(second.alive, false);
+});
+
 test('the HUD shows vehicle health and speed while driving', () => {
   assert.equal(formatSpeed(0), '0 km/h');
   assert.equal(formatSpeed(100), '35 km/h');
@@ -376,6 +421,8 @@ test('the HUD shows vehicle health and speed while driving', () => {
     assert.ok(layout[key].x + layout[key].width <= 960);
     assert.ok(layout[key].y + layout[key].height <= 540);
   }
+  assert.equal(layout.drivingVisible, true);
+  assert.equal(computeHudLayout(960, 120).drivingVisible, false, 'hide the speed row on a short canvas');
 });
 
 test('vehicles are snapshotted and interpolated by heading', () => {

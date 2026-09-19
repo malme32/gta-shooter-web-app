@@ -135,12 +135,13 @@ export function formatSpeed(speed, scale = 0.35) {
  * Panel widths scale with the canvas so the left and right columns never
  * overlap on narrow viewports, and the right-hand panels are flagged hidden
  * (`wantedVisible`/`cashVisible`) once there is no room for them next to the
- * left column.
+ * left column. `drivingVisible` is false on very short canvases where the
+ * vehicle speed row would collide with the bottom weapon row.
  *
  * @param {number} width Logical canvas width, in CSS pixels.
  * @param {number} height Logical canvas height, in CSS pixels.
  * @returns {object} Named rectangles `{ x, y, width, height }` plus the
- *   `wantedVisible`/`cashVisible` flags.
+ *   `wantedVisible`/`cashVisible`/`drivingVisible` flags.
  */
 export function computeHudLayout(width, height) {
   const w = Number.isFinite(width) && width > 0 ? width : 960;
@@ -176,6 +177,7 @@ export function computeHudLayout(width, height) {
     cash,
     wantedVisible: wanted.x >= health.x + health.width + gap,
     cashVisible: cash.x >= weapon.x + weapon.width + gap,
+    drivingVisible: ammo.y + ammo.height + 26 + 16 + gap <= weapon.y,
   };
 }
 
@@ -301,7 +303,7 @@ export function renderHud(ctx, game, size) {
   drawBar(ctx, layout.health, healthRatio, healthColor(healthRatio), `HP ${Math.round(health)}`);
   drawBar(ctx, layout.armour, armourRatio, HUD_COLORS.armour, `AP ${Math.round(armour)}`);
 
-  if (vehicle) {
+  if (vehicle && layout.drivingVisible) {
     const vehicleRatio = barFillRatio(vehicle.health, vehicle.maxHealth);
     drawBar(ctx, layout.vehicle, vehicleRatio, healthColor(vehicleRatio), `CAR ${Math.round(vehicle.health)}`);
     drawLabel(ctx, formatSpeed(vehicle.speed), layout.speed.x, layout.speed.y + layout.speed.height / 2, {
