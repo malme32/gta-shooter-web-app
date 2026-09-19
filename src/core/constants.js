@@ -146,7 +146,7 @@ export const WEAPONS = Object.freeze({
     bulletSpeed: 640,
     bulletRange: 300,
     spreadRad: 0.18,
-    pellets: 8,
+    pellets: 10,
     automatic: false,
     magazineSize: 6,
     reloadTicks: 140,
@@ -167,6 +167,15 @@ export const WEAPONS = Object.freeze({
     reserveAmmo: 120,
   }),
 });
+
+/**
+ * Weapon ids reachable from the number keys, in slot order: `1` selects
+ * `WEAPON_SLOTS[0]`, `2` selects `WEAPON_SLOTS[1]`, and so on. The mouse wheel
+ * cycles through this same list.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const WEAPON_SLOTS = Object.freeze(['pistol', 'smg', 'shotgun']);
 
 /**
  * Heat needed to reach each wanted star. Index 0 is "clean" (zero stars), so

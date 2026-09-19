@@ -22,11 +22,21 @@ import {
   WANTED_THRESHOLDS,
   WANTED_MAX_HEAT,
   WANTED_HEAT_DECAY_PER_TICK,
+  WEAPON_SLOTS,
 } from './constants.js';
 import { createRng } from './rng.js';
 import { clamp, lerp as lerpVec } from './geometry.js';
 import { clampCamera, cameraFollowTarget } from './map.js';
 import { createPlayer, movePlayer as movePlayerEntity, aimAt } from './player.js';
+import {
+  weaponSpec,
+  switchToSlot,
+  cycleWeapon,
+  beginReload,
+  tickWeapon,
+  fireWeapon,
+} from './weapons.js';
+import { createBullet, stepBullet, findBulletTarget, applyBulletDamage } from './bullet.js';
 
 /**
  * @typedef {object} GameInput
@@ -37,6 +47,10 @@ import { createPlayer, movePlayer as movePlayerEntity, aimAt } from './player.js
  * @property {boolean} sprint
  * @property {boolean} [fire]
  * @property {boolean} [reload]
+ * @property {boolean} [weapon1] One-shot intent: equip slot 1.
+ * @property {boolean} [weapon2]
+ * @property {boolean} [weapon3]
+ * @property {number} [cycleWeapon] Accumulated wheel steps (negative = up).
  * @property {number|null} [pointerX] Canvas-space pointer x, or `null`.
  * @property {number|null} [pointerY] Canvas-space pointer y, or `null`.
  */
@@ -57,7 +71,9 @@ import { createPlayer, movePlayer as movePlayerEntity, aimAt } from './player.js
  * @property {number} accumulator Seconds carried between frames.
  * @property {GameInput} input
  * @property {object} player
- * @property {object[]} bullets
+ * @property {object[]} bullets Live projectiles.
+ * @property {number} nextBulletId Monotonic id source for new projectiles.
+ * @property {object[]} targets Shootable actors (enemies, props); pure data.
  * @property {GameEvent[]} events
  * @property {{ x: number, y: number, width: number, height: number }} camera
  * @property {{ x: number, y: number }} cameraDeadZone
@@ -77,6 +93,10 @@ function emptyInput() {
     sprint: false,
     fire: false,
     reload: false,
+    weapon1: false,
+    weapon2: false,
+    weapon3: false,
+    cycleWeapon: 0,
     pointerX: null,
     pointerY: null,
   };
@@ -214,6 +234,8 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
     input: emptyInput(),
     player: null,
     bullets: [],
+    nextBulletId: 0,
+    targets: [],
     events: [],
     viewport: normalizeViewport(viewport),
     camera: null,
@@ -245,6 +267,7 @@ export function restart(state) {
   state.tick = 0;
   state.accumulator = 0;
   state.bullets.length = 0;
+  state.nextBulletId = 0;
   state.events = [];
   state.heat = 0;
   state.wanted = 0;
@@ -396,10 +419,127 @@ function updateAim(state) {
   return aimAt(state.player, world.x, world.y);
 }
 
-function tickCooldowns(state) {
-  const p = state.player;
-  if (p.cooldown > 0) p.cooldown -= 1;
-  if (p.reloadTicks > 0) p.reloadTicks -= 1;
+/**
+ * Spawn a projectile from a weapon fire descriptor, assign it an id and emit
+ * the matching `tracer` event.
+ *
+ * @param {GameState} state
+ * @param {object} spawn Plain `{ x, y, vx, vy, angle, damage, ttl, weapon }`.
+ * @param {number} owner Firing entity id.
+ * @returns {object} The created bullet.
+ */
+function spawnProjectile(state, spawn, owner) {
+  const bullet = createBullet({ ...spawn, id: state.nextBulletId, owner });
+  state.nextBulletId += 1;
+  state.bullets.push(bullet);
+  emitEvent(state, 'tracer', {
+    bulletId: bullet.id,
+    owner,
+    weapon: spawn.weapon,
+    x: spawn.x,
+    y: spawn.y,
+    angle: spawn.angle,
+    vx: spawn.vx,
+    vy: spawn.vy,
+  });
+  return bullet;
+}
+
+/**
+ * Consume weapon intents from the input for one tick: number-key / wheel
+ * selection, reload, then firing. Firing emits a `muzzle` event and one
+ * `tracer` event per pellet.
+ *
+ * @param {GameState} state
+ */
+function updateWeapon(state) {
+  const player = state.player;
+  const input = state.input;
+
+  for (let slot = 0; slot < WEAPON_SLOTS.length; slot += 1) {
+    const flag = `weapon${slot + 1}`;
+    if (input[flag]) {
+      switchToSlot(player, slot);
+      input[flag] = false;
+    }
+  }
+  if (input.cycleWeapon) {
+    cycleWeapon(player, Math.sign(input.cycleWeapon));
+    input.cycleWeapon = 0;
+  }
+
+  if (input.reload) beginReload(player);
+
+  const spec = weaponSpec(player.weapon);
+  const held = input.fire === true;
+  const pressed = held && !player.fireHeld;
+  player.fireHeld = held;
+  const wantsToFire = spec.automatic ? held : pressed;
+
+  if (!wantsToFire) return;
+  const result = fireWeapon(player, { rng: state.rng, x: player.x, y: player.y, angle: player.aim });
+  if (!result.fired) return;
+
+  emitEvent(state, 'muzzle', {
+    weapon: result.spec.id,
+    x: player.x,
+    y: player.y,
+    angle: player.aim,
+    pellets: result.spec.pellets,
+    ammo: player.ammo,
+  });
+  for (const spawn of result.bullets) spawnProjectile(state, spawn, player.id);
+}
+
+/**
+ * Move every live bullet one tick and resolve collisions. A bullet that
+ * overlaps a target deals damage and emits a `hit` event; one that reaches a
+ * wall emits `bullet_wall`. Dead bullets are compacted out in place.
+ *
+ * @param {GameState} state
+ */
+function updateBullets(state) {
+  const bullets = state.bullets;
+  let write = 0;
+
+  for (let i = 0; i < bullets.length; i += 1) {
+    const bullet = bullets[i];
+    if (!bullet || bullet.alive === false) continue;
+
+    const result = stepBullet(state.grid, bullet, TICK_SECONDS);
+    const hit = findBulletTarget(bullet, state.targets);
+
+    if (hit) {
+      const damage = applyBulletDamage(hit.target, bullet.damage);
+      bullet.alive = false;
+      emitEvent(state, 'hit', {
+        bulletId: bullet.id,
+        owner: bullet.owner,
+        weapon: bullet.weapon,
+        targetId: hit.target.id,
+        amount: bullet.damage,
+        absorbed: damage.absorbed,
+        health: damage.health,
+        killed: damage.killed,
+        x: bullet.x,
+        y: bullet.y,
+      });
+    } else if (result.hitWall) {
+      emitEvent(state, 'bullet_wall', {
+        bulletId: bullet.id,
+        owner: bullet.owner,
+        weapon: bullet.weapon,
+        x: bullet.x,
+        y: bullet.y,
+        tx: result.wall.tx,
+        ty: result.wall.ty,
+      });
+    }
+
+    if (bullet.alive) bullets[write++] = bullet;
+  }
+
+  bullets.length = write;
 }
 
 function updateWanted(state) {
@@ -426,9 +566,11 @@ export function update(state) {
   state.tick += 1;
   if (state.gameOver || state.paused) return state;
 
-  tickCooldowns(state);
+  tickWeapon(state.player);
   updateAim(state);
+  updateWeapon(state);
   movePlayerEntity(state.grid, state.player, state.input, TICK_SECONDS);
+  updateBullets(state);
   updateCamera(state);
   updateWanted(state);
   return state;

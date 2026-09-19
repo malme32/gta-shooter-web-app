@@ -49,9 +49,34 @@ import { moveCircle } from './map.js';
  * @property {number} aim Aim angle, in radians, measured from the +x axis.
  * @property {number} cooldown Ticks until the next shot may be fired.
  * @property {number} reloadTicks Ticks remaining on an in-progress reload.
- * @property {string} weapon
- * @property {number} ammo Rounds left in the magazine.
+ * @property {boolean} reloading Whether a reload is in progress.
+ * @property {string} weapon Currently equipped weapon id.
+ * @property {number} ammo Rounds left in the equipped weapon's magazine.
+ * @property {number} reserve Reserve rounds available to reload from.
+ * @property {Record<string, { ammo: number, reserve: number }>} weapons
+ *   Per-weapon magazine/reserve state, so switching weapons preserves each
+ *   one's ammo.
+ * @property {boolean} fireHeld Previous tick's trigger state, used for
+ *   semi-automatic edge detection.
  */
+
+/**
+ * Build the initial per-weapon ammo table.
+ *
+ * @param {Record<string, { ammo?: number, reserve?: number }>} [overrides]
+ * @returns {Record<string, { ammo: number, reserve: number }>}
+ */
+function createArsenal(overrides) {
+  /** @type {Record<string, { ammo: number, reserve: number }>} */
+  const arsenal = {};
+  for (const spec of Object.values(WEAPONS)) {
+    const given = overrides?.[spec.id];
+    const ammo = Number.isFinite(given?.ammo) ? given.ammo : spec.magazineSize;
+    const reserve = Number.isFinite(given?.reserve) ? given.reserve : spec.reserveAmmo;
+    arsenal[spec.id] = { ammo, reserve };
+  }
+  return arsenal;
+}
 
 /**
  * Create a player at a world position.
@@ -65,6 +90,8 @@ import { moveCircle } from './map.js';
  * @param {number} [options.health=PLAYER_STARTING_HEALTH]
  * @param {number} [options.armour=PLAYER_STARTING_ARMOUR]
  * @param {string} [options.weapon=DEFAULT_WEAPON]
+ * @param {Record<string, { ammo?: number, reserve?: number }>} [options.weapons]
+ *   Initial magazine/reserve overrides keyed by weapon id.
  * @returns {Player}
  */
 export function createPlayer({
@@ -76,10 +103,12 @@ export function createPlayer({
   health = PLAYER_STARTING_HEALTH,
   armour = PLAYER_STARTING_ARMOUR,
   weapon = DEFAULT_WEAPON,
+  weapons,
 } = {}) {
   const spec = WEAPONS[weapon] ?? WEAPONS[DEFAULT_WEAPON];
   const maxHealth = PLAYER_MAX_HEALTH;
   const maxArmour = PLAYER_MAX_ARMOUR;
+  const arsenal = createArsenal(weapons);
 
   return {
     id,
@@ -95,8 +124,12 @@ export function createPlayer({
     aim: 0,
     cooldown: 0,
     reloadTicks: 0,
+    reloading: false,
     weapon: spec.id,
-    ammo: spec.magazineSize,
+    ammo: arsenal[spec.id].ammo,
+    reserve: arsenal[spec.id].reserve,
+    weapons: arsenal,
+    fireHeld: false,
   };
 }
 

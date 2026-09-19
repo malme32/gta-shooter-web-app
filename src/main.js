@@ -31,7 +31,7 @@ import {
   renderWorld,
   snapshotScene,
 } from './ui/render.js';
-import { HUD_DEFAULTS, renderHud } from './ui/hud.js';
+import { renderHud } from './ui/hud.js';
 
 function cssSize(canvas) {
   const rect = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect() : null;
@@ -92,7 +92,8 @@ function bootstrap() {
 
   const status = document.getElementById('status');
   if (status) {
-    status.textContent = 'City online — WASD/arrows move, Shift sprints, mouse aims.';
+    status.textContent =
+      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons.';
   }
 
   let dpr = syncCanvasSize(canvas, ctx, game);
@@ -119,7 +120,7 @@ function bootstrap() {
 
     if (status && frameCount % 30 === 0) {
       const p = game.player;
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${HUD_DEFAULTS.weapon}`;
+      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${p.weapon} ${p.ammo}/${p.reserve}`;
     }
 
     requestAnimationFrame(frame);
