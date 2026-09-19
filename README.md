@@ -4,13 +4,14 @@ A dependency-free top-down shooter web game built with plain HTML, CSS,
 ECMAScript 2020 modules and the Canvas 2D API. There is no build step and no
 third-party runtime dependency.
 
-This repository is currently at **T6: weapons, shooting, projectiles and
-damage**. It contains the project skeleton and the pure simulation core
-(constants, geometry, seeded rng, the fixed-timestep loop, the city map with
-collision and clamping, and the player entity with a dead-zone camera follow),
-keyboard/mouse input in `src/ui/input.js`, the camera-transform renderer and HUD
-in `src/ui/render.js` and `src/ui/hud.js`, and the weapon/projectile systems in
-`src/core/weapons.js` and `src/core/bullet.js`. Audio hooks in a later task.
+This repository is currently at **T8: vehicles - enter/exit, arcade driving,
+run-over and destruction**. It contains the project skeleton and the pure
+simulation core (constants, geometry, seeded rng, the fixed-timestep loop, the
+city map with collision and clamping, and the player entity with a dead-zone
+camera follow), keyboard/mouse input in `src/ui/input.js`, the camera-transform
+renderer and HUD in `src/ui/render.js` and `src/ui/hud.js`, the weapon/projectile
+systems in `src/core/weapons.js` and `src/core/bullet.js`, and the vehicle system
+in `src/core/vehicle.js`. Audio hooks in a later task.
 
 ## Run
 
@@ -58,11 +59,17 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
   `src/ui/hud.js` - health, armour, ammo, weapon, wanted and cash placeholders;
   the canvas backing store is scaled by the device pixel ratio in
   `src/main.js`.
-- T6 (this task): `src/core/weapons.js` - pistol/SMG/shotgun fire rate, spread
+- T6: `src/core/weapons.js` - pistol/SMG/shotgun fire rate, spread
   cone, magazines, reserve ammo and reloads, plus `1`/`2`/`3` and wheel weapon
   switching; `src/core/bullet.js` - projectiles with swept (non-tunnelling)
   tile collision, ttl and damage; `muzzle`, `tracer`, `hit` and `bullet_wall`
   events in `src/core/game.js`.
+- T8 (this task): `src/core/vehicle.js` - arcade throttle/steer/friction with
+  building collision, health and explosions; `E` enters/exits the nearest
+  vehicle (never onto a building tile), `Space` handbrakes while driving,
+  run-over damage and blast damage to nearby entities; vehicle rendering with
+  heading interpolation and a driving HUD in `src/ui/render.js` and
+  `src/ui/hud.js`.
 - Audio arrives in a later task and is never committed directly to `main`.
 
 ## Contributing

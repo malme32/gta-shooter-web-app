@@ -105,6 +105,31 @@ export function formatCash(amount) {
 }
 
 /**
+ * The vehicle the player is currently driving, or `null`.
+ *
+ * @param {object} game Game state (or a partial HUD model).
+ * @returns {object|null}
+ */
+export function drivingVehicle(game) {
+  const id = game?.player?.vehicleId;
+  if (id === null || id === undefined || !Array.isArray(game?.vehicles)) return null;
+  return game.vehicles.find((vehicle) => vehicle && vehicle.id === id) ?? null;
+}
+
+/**
+ * Format a vehicle speed (pixels/second) as an arcade speed reading.
+ *
+ * @param {number} speed Signed speed, in pixels/second.
+ * @param {number} [scale=0.35] Pixels/second to display-unit factor.
+ * @returns {string} e.g. `112 km/h`.
+ */
+export function formatSpeed(speed, scale = 0.35) {
+  const value = Number.isFinite(speed) ? Math.abs(speed) : 0;
+  const factor = Number.isFinite(scale) && scale > 0 ? scale : 0.35;
+  return `${Math.round(value * factor)} km/h`;
+}
+
+/**
  * Compute every HUD rectangle for a physical canvas size. Pure: no drawing.
  *
  * @param {number} width Logical canvas width, in CSS pixels.
@@ -122,6 +147,8 @@ export function computeHudLayout(width, height) {
     health: { x: pad, y: pad, width: 180, height: 12 },
     armour: { x: pad, y: pad + 18, width: 180, height: 10 },
     ammo: { x: pad, y: pad + 36, width: 120, height: 8 },
+    vehicle: { x: pad, y: pad + 54, width: 180, height: 10 },
+    speed: { x: pad, y: pad + 70, width: 160, height: 16 },
     weapon: { x: pad, y: h - pad - 14, width: 220, height: 16 },
     wanted: { x: w - pad - 130, y: pad, width: 130, height: 16 },
     cash: { x: w - pad - 160, y: h - pad - 18, width: 160, height: 20 },
@@ -244,15 +271,24 @@ export function renderHud(ctx, game, size) {
       : HUD_DEFAULTS.reserveAmmo;
   const wanted = Number.isFinite(game.wanted) ? game.wanted : HUD_DEFAULTS.wanted;
   const cash = Number.isFinite(game.cash) ? game.cash : HUD_DEFAULTS.cash;
+  const vehicle = drivingVehicle(game);
 
   ctx.save();
   drawBar(ctx, layout.health, healthRatio, healthColor(healthRatio), `HP ${Math.round(health)}`);
   drawBar(ctx, layout.armour, armourRatio, HUD_COLORS.armour, `AP ${Math.round(armour)}`);
-  drawBar(ctx, layout.ammo, barFillRatio(ammo, magazine), HUD_COLORS.ammo, `${ammo}/${magazine}  (${reserve})`);
 
-  drawLabel(ctx, `${weaponLabel(weapon)}`, layout.weapon.x, layout.weapon.y + layout.weapon.height / 2, {
-    color: HUD_COLORS.muted,
-  });
+  if (vehicle) {
+    const vehicleRatio = barFillRatio(vehicle.health, vehicle.maxHealth);
+    drawBar(ctx, layout.vehicle, vehicleRatio, healthColor(vehicleRatio), `CAR ${Math.round(vehicle.health)}`);
+    drawLabel(ctx, formatSpeed(vehicle.speed), layout.speed.x, layout.speed.y + layout.speed.height / 2, {
+      color: HUD_COLORS.ink,
+    });
+  } else {
+    drawBar(ctx, layout.ammo, barFillRatio(ammo, magazine), HUD_COLORS.ammo, `${ammo}/${magazine}  (${reserve})`);
+    drawLabel(ctx, `${weaponLabel(weapon)}`, layout.weapon.x, layout.weapon.y + layout.weapon.height / 2, {
+      color: HUD_COLORS.muted,
+    });
+  }
 
   drawLabel(ctx, formatCash(cash), layout.cash.x + layout.cash.width, layout.cash.y + layout.cash.height / 2, {
     color: HUD_COLORS.cash,

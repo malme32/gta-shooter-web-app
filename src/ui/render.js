@@ -188,6 +188,7 @@ export function visibleTileBounds(camera, grid, tileSize = TILE_SIZE) {
 
 function collectEntities(game) {
   const entities = [];
+  if (Array.isArray(game?.vehicles)) entities.push(...game.vehicles);
   if (Array.isArray(game?.entities)) entities.push(...game.entities);
   if (Array.isArray(game?.bullets)) entities.push(...game.bullets);
   return entities;
@@ -222,6 +223,7 @@ export function snapshotScene(game) {
       x: entity.x,
       y: entity.y,
       radius: entity.radius,
+      angle: entity.angle,
       alive: entity.alive,
     })),
   };
@@ -247,8 +249,13 @@ export function interpolateScene(prev, curr, t) {
     player: interpolateActor(prev?.player, curr.player, t),
     camera: interpolateCamera(prev?.camera, curr.camera, t),
     entities: (curr.entities ?? []).map((entity) => {
-      const point = interpolatePoint(prevEntities.get(entity.id), entity, t);
-      return { ...entity, x: point.x, y: point.y };
+      const prevEntity = prevEntities.get(entity.id);
+      const point = interpolatePoint(prevEntity, entity, t);
+      const angle =
+        prevEntity && Number.isFinite(prevEntity.angle) && Number.isFinite(entity.angle)
+          ? lerpAngle(prevEntity.angle, entity.angle, t)
+          : entity.angle;
+      return { ...entity, x: point.x, y: point.y, angle };
     }),
   };
 }
@@ -365,6 +372,7 @@ export function drawEntity(ctx, entity) {
   const sprite = spriteFor(entity);
   ctx.save();
   ctx.translate(entity.x, entity.y);
+  if (sprite.shape === 'vehicle') ctx.rotate(Number.isFinite(entity.angle) ? entity.angle : 0);
   switch (sprite.shape) {
     case 'vehicle':
       drawVehicle(ctx, sprite);

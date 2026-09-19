@@ -93,7 +93,7 @@ function bootstrap() {
   const status = document.getElementById('status');
   if (status) {
     status.textContent =
-      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons.';
+      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving.';
   }
 
   let dpr = syncCanvasSize(canvas, ctx, game);
@@ -112,8 +112,14 @@ function bootstrap() {
     const alpha = alphaFor(game.accumulator, TICK_SECONDS);
     const scene = interpolateScene(prevSnapshot, snapshotScene(game), alpha);
 
+    const driving = game.player.vehicleId !== null && game.player.vehicleId !== undefined;
     clearCanvas(ctx, { width, height, dpr });
-    renderWorld(ctx, { grid: game.grid, camera: scene.camera, player: scene.player, entities: scene.entities });
+    renderWorld(ctx, {
+      grid: game.grid,
+      camera: scene.camera,
+      player: driving ? null : scene.player,
+      entities: scene.entities,
+    });
     renderHud(ctx, game, { width, height });
 
     if (steps > 0) prevSnapshot = snapshotScene(game);
