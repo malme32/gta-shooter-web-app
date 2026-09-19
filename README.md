@@ -4,8 +4,10 @@ A dependency-free top-down shooter web game built with plain HTML, CSS,
 ECMAScript 2020 modules and the Canvas 2D API. There is no build step and no
 third-party runtime dependency.
 
-This repository is currently at **T1: scaffold**. It contains the project
-skeleton, conventions and CI only; no game code has landed on `main` yet.
+This repository is currently at **T2: core foundations**. It contains the
+project skeleton and the pure simulation core (constants, geometry, seeded
+rng, event bus and the fixed-timestep loop). Rendering, input and audio hook
+in later tasks.
 
 ## Run
 
@@ -36,8 +38,13 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
 
 ## Status
 
-- T1 (this task): repository scaffold, page shell, CI and PR template.
-- Game code arrives in later tasks and is never committed directly to `main`.
+- T1: repository scaffold, page shell, CI and PR template.
+- T2 (this task): pure core foundations - `src/core/constants.js`,
+  `src/core/geometry.js`, `src/core/rng.js` and `src/core/game.js` with the
+  fixed-timestep `advance()` accumulator; `src/main.js` drives it from a
+  `requestAnimationFrame` loop.
+- Rendering, input and audio arrive in later tasks and are never committed
+  directly to `main`.
 
 ## Contributing
 
