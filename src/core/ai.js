@@ -57,6 +57,14 @@ export const PATROL_MAX_DISTANCE = TILE_SIZE * 5;
 export const PATROL_ATTEMPTS = 8;
 
 /**
+ * How many ticks an enemy may spend walking towards a single patrol waypoint
+ * before it gives up and picks a new one. Without this a waypoint that is not
+ * actually reachable (for example across a block on a hand-authored map) could
+ * wedge the enemy forever.
+ */
+export const PATROL_TIMEOUT_TICKS = 300;
+
+/**
  * @typedef {object} AiContext
  * @property {object} [player] Target to sense and attack.
  * @property {() => number} [rng=Math.random] Random source in `[0, 1)`.
@@ -159,7 +167,7 @@ export function steerToward(map, enemy, targetX, targetY, dtSeconds = TICK_SECON
   if (length === 0 || !map) return { moved: false, x: enemy.x, y: enemy.y };
 
   const dt = Number.isFinite(dtSeconds) ? Math.max(0, dtSeconds) : 0;
-  const step = Math.max(0, enemy.speed) * dt;
+  const step = Math.min(Math.max(0, enemy.speed) * dt, length);
   const ux = dx / length;
   const uy = dy / length;
 
@@ -209,6 +217,7 @@ export function choosePatrolTarget(map, enemy, rng = Math.random) {
 function ensurePatrolTarget(map, enemy, rng) {
   if (!enemy.patrolTarget) {
     enemy.patrolTarget = choosePatrolTarget(map, enemy, rng);
+    enemy.patrolTicks = 0;
   }
 }
 
@@ -299,10 +308,11 @@ export function aiTick(map, enemy, { player, rng = Math.random, dtSeconds = TICK
     setState(enemy, inRange ? AI_STATES.ATTACK : AI_STATES.CHASE);
   } else if (enemy.state === AI_STATES.ATTACK || enemy.state === AI_STATES.CHASE) {
     enemy.lostTicks += 1;
-    if (enemy.lostTicks > spec.loseSightTicks) {
+    if (enemy.lostTicks >= spec.loseSightTicks) {
       setState(enemy, AI_STATES.PATROL);
       enemy.lastKnown = null;
       enemy.patrolTarget = null;
+      enemy.patrolTicks = 0;
       enemy.idleTicks = 0;
       result.lostTarget = true;
     } else if (enemy.state === AI_STATES.ATTACK) {
@@ -338,9 +348,12 @@ export function aiTick(map, enemy, { player, rng = Math.random, dtSeconds = TICK
       ensurePatrolTarget(map, enemy, random);
       const waypoint = enemy.patrolTarget;
       if (waypoint) {
-        const reached = steerToward(map, enemy, waypoint.x, waypoint.y, dtSeconds);
-        if (!reached.moved && distance(enemy, waypoint) <= PATROL_ARRIVE_RADIUS) {
+        steerToward(map, enemy, waypoint.x, waypoint.y, dtSeconds);
+        enemy.patrolTicks = (Number.isFinite(enemy.patrolTicks) ? enemy.patrolTicks : 0) + 1;
+        const arrived = distance(enemy, waypoint) <= PATROL_ARRIVE_RADIUS;
+        if (arrived || enemy.patrolTicks >= PATROL_TIMEOUT_TICKS) {
           enemy.patrolTarget = null;
+          enemy.patrolTicks = 0;
         }
       }
       break;

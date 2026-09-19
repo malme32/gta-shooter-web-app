@@ -23,6 +23,7 @@
  */
 
 import { clamp } from './geometry.js';
+import { applyBulletDamage } from './bullet.js';
 
 /**
  * @typedef {object} LootDrop
@@ -71,6 +72,7 @@ import { clamp } from './geometry.js';
  * @property {number} idleTicks Ticks spent idle.
  * @property {{ x: number, y: number }|null} lastKnown Where the target was last seen.
  * @property {{ x: number, y: number }|null} patrolTarget Current patrol waypoint.
+ * @property {number} patrolTicks Ticks spent walking to the current waypoint.
  * @property {boolean} deadHandled Whether death has been reaped (loot rolled).
  */
 
@@ -208,7 +210,8 @@ export function enemySpec(type) {
  * Create an enemy of a given archetype.
  *
  * @param {object} [options]
- * @param {number|string} [options.id=0]
+ * @param {number|string} [options.id=-1] Unique id; game spawns use ids `>= 1`
+ *   so they never collide with the player (id `0`).
  * @param {string} [options.type='thug'] Archetype id.
  * @param {number} [options.x=0] World x, in pixels.
  * @param {number} [options.y=0] World y, in pixels.
@@ -216,7 +219,7 @@ export function enemySpec(type) {
  * @param {number} [options.armour] Armour override.
  * @returns {Enemy}
  */
-export function createEnemy({ id = 0, type = 'thug', x = 0, y = 0, health, armour } = {}) {
+export function createEnemy({ id = -1, type = 'thug', x = 0, y = 0, health, armour } = {}) {
   const spec = enemySpec(type);
   const maxHealth = spec.maxHealth;
   const maxArmour = spec.armour;
@@ -244,6 +247,7 @@ export function createEnemy({ id = 0, type = 'thug', x = 0, y = 0, health, armou
     idleTicks: 0,
     lastKnown: null,
     patrolTarget: null,
+    patrolTicks: 0,
     deadHandled: false,
   };
 }
@@ -263,6 +267,10 @@ export function isEnemyAlive(enemy) {
  * Apply damage, draining armour before health. Health is floored at zero and an
  * enemy whose health reaches zero is marked dead.
  *
+ * Delegates to the shared {@link applyBulletDamage} so enemies and every other
+ * shootable actor use exactly one armour-before-health implementation; the
+ * result is re-shaped to the enemy-facing field names.
+ *
  * @param {Enemy} enemy
  * @param {number} amount Raw damage (negative and non-finite values are ignored).
  * @returns {{ amount: number, absorbed: number, health: number, armour: number, killed: boolean, ignored: boolean }}
@@ -280,20 +288,13 @@ export function applyEnemyDamage(enemy, amount) {
     };
   }
 
-  const absorbed = Math.min(enemy.armour, dealt);
-  const toHealth = dealt - absorbed;
-  enemy.armour = clamp(enemy.armour - absorbed, 0, enemy.maxArmour);
-  enemy.health = clamp(enemy.health - toHealth, 0, enemy.maxHealth);
-
-  const killed = enemy.health <= 0;
-  enemy.alive = !killed;
-
+  const result = applyBulletDamage(enemy, dealt);
   return {
-    amount: dealt,
-    absorbed,
-    health: enemy.health,
+    amount: result.dealt,
+    absorbed: result.absorbed,
+    health: result.health,
     armour: enemy.armour,
-    killed,
+    killed: result.killed,
     ignored: false,
   };
 }
@@ -339,9 +340,9 @@ function drawLoot(table, rng) {
 }
 
 /**
- * Roll an enemy's loot table. Draws two values when something drops (one for
- * the type, one for the amount) and one when nothing drops, so a seeded rng
- * always yields the same result.
+ * Roll an enemy's loot table. Draws one value for the drop chance and, when
+ * something drops, one more for the type and one for the amount (three draws
+ * total), so a seeded rng always yields the same result.
  *
  * @param {() => number} [rng=Math.random]
  * @param {EnemySpec|string} [spec] Archetype spec or id.

@@ -57,6 +57,10 @@ test('createEnemy honours a health override and never spawns above the ceiling',
   assert.equal(createEnemy({ type: 'thug', health: 0 }).alive, false);
 });
 
+test('createEnemy default id never collides with the player id (0)', () => {
+  assert.equal(createEnemy({ type: 'thug' }).id, -1);
+});
+
 test('applyEnemyDamage drains armour before health and reports kills', () => {
   const brute = createEnemy({ type: 'brute', id: 1 });
   assert.equal(brute.maxHealth, 220);

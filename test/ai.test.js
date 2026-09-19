@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   AI_STATES,
   PATROL_ARRIVE_RADIUS,
+  PATROL_TIMEOUT_TICKS,
   lineOfSight,
   canSee,
   steerToward,
@@ -142,16 +143,16 @@ test('an enemy loses the player after loseSightTicks without line of sight', () 
   assert.equal(thug.state, AI_STATES.CHASE);
 
   const hidden = { id: 0, x: 10000, y: 10000, alive: true };
-  for (let i = 0; i < spec.loseSightTicks; i += 1) {
+  for (let i = 0; i < spec.loseSightTicks - 1; i += 1) {
     const result = aiTick(map, thug, { player: hidden, rng });
     assert.equal(result.lostTarget, false);
     assert.equal(thug.state, AI_STATES.CHASE, `still hunting at lostTicks=${thug.lostTicks}`);
   }
 
   const timeout = aiTick(map, thug, { player: hidden, rng });
-  assert.equal(timeout.lostTarget, true);
+  assert.equal(timeout.lostTarget, true, 'forgets exactly when the timeout elapses');
   assert.equal(thug.state, AI_STATES.PATROL);
-  assert.equal(thug.lostTicks, spec.loseSightTicks + 1);
+  assert.equal(thug.lostTicks, spec.loseSightTicks);
 });
 
 test('an enemy that breaks line of sight while attacking drops to chase', () => {
@@ -191,6 +192,49 @@ test('choosePatrolTarget returns a walkable point and is deterministic', () => {
   const b = choosePatrolTarget(map, enemy, createRng(9));
   assert.deepEqual(a, b);
   assert.equal(canStandAt(map, a.x, a.y, enemy.radius), true);
+});
+
+test('a patrolling enemy walks and selects multiple waypoints over time', () => {
+  const map = makeMap(80, 80);
+  const enemy = createEnemy({ id: 1, type: 'thug', x: 1280, y: 1280 });
+  enemy.state = AI_STATES.PATROL;
+  const player = { id: 0, x: -100000, y: -100000, alive: true };
+  const rng = createRng(4321);
+  const startX = enemy.x;
+  const startY = enemy.y;
+  const waypoints = new Set();
+
+  for (let i = 0; i < 6000; i += 1) {
+    aiTick(map, enemy, { player, rng });
+    if (enemy.patrolTarget) {
+      waypoints.add(`${enemy.patrolTarget.x},${enemy.patrolTarget.y}`);
+    }
+  }
+
+  assert.ok(waypoints.size > 1, `expected several patrol waypoints, saw ${waypoints.size}`);
+  assert.ok(
+    enemy.x !== startX || enemy.y !== startY,
+    'a patrolling enemy must actually move, not freeze on one waypoint',
+  );
+});
+
+test('patrol abandons an unreachable waypoint instead of freezing', () => {
+  const map = wallColumn(40, 40, 5);
+  const enemy = createEnemy({ id: 1, type: 'thug', x: 100, y: 100 });
+  enemy.state = AI_STATES.PATROL;
+  enemy.patrolTarget = { x: 400, y: 100 };
+  enemy.patrolTicks = 0;
+  const player = { id: 0, x: -100000, y: -100000, alive: true };
+  const rng = createRng(11);
+
+  let abandoned = false;
+  for (let i = 0; i < PATROL_TIMEOUT_TICKS + 10 && !abandoned; i += 1) {
+    aiTick(map, enemy, { player, rng });
+    abandoned = !enemy.patrolTarget || enemy.patrolTarget.x !== 400 || enemy.patrolTarget.y !== 100;
+  }
+
+  assert.equal(abandoned, true, 'the unreachable waypoint is eventually dropped');
+  assert.ok(enemy.x + enemy.radius <= 5 * TILE_SIZE + 1e-6, 'the enemy stays out of the wall');
 });
 
 test('AI transitions are deterministic under a seeded rng', () => {
