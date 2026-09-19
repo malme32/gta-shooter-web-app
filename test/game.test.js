@@ -186,6 +186,8 @@ test('restart resets the run but keeps the map and spawn', () => {
   update(state);
   addHeat(state, 100);
   emitEvent(state, 'noise');
+  const targets = state.targets;
+  targets.push({ id: 1, x: 0, y: 0, radius: 8, health: 10, alive: true });
   state.gameOver = true;
 
   const spawn = { x: state.spawn.x, y: state.spawn.y };
@@ -199,6 +201,8 @@ test('restart resets the run but keeps the map and spawn', () => {
   assert.equal(state.paused, false);
   assert.deepEqual(state.events, []);
   assert.deepEqual(state.bullets, []);
+  assert.equal(state.targets, targets, 'targets array reference survives restart');
+  assert.deepEqual(state.targets, [], 'stale targets are cleared on restart');
   assert.equal(state.map, map);
   assert.deepEqual({ x: state.player.x, y: state.player.y }, spawn);
   assert.equal(state.input.left, false);

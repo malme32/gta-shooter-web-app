@@ -140,7 +140,7 @@ function bootstrap() {
 
     if (status && frameCount % 30 === 0) {
       const p = game.player;
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${weaponLabel(p.weapon)}`;
+      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve}`;
     }
 
     requestAnimationFrame(frame);

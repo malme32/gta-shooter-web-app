@@ -225,6 +225,44 @@ test('switching weapons preserves each magazine and cancels a reload', () => {
   assert.equal(switchWeapon(player, 'plasma'), false, 'unknown weapon is a no-op');
 });
 
+test('switching weapons does not bypass the firing cooldown', () => {
+  const spec = WEAPONS.pistol;
+  const player = createPlayer({ weapon: 'pistol' });
+
+  assert.equal(fireWeapon(player).fired, true);
+  assert.equal(player.cooldown, spec.fireDelayTicks);
+
+  assert.equal(switchToSlot(player, 1), true);
+  assert.equal(player.weapon, 'smg');
+  assert.equal(player.cooldown, 0, 'a weapon that has not fired starts ready');
+
+  assert.equal(switchToSlot(player, 0), true);
+  assert.equal(player.weapon, 'pistol');
+  assert.equal(player.cooldown, spec.fireDelayTicks, 'the pistol cooldown is restored');
+
+  assert.equal(canFire(player), false, 'still cooling after the switch round trip');
+  assert.equal(fireWeapon(player).fired, false, 'switching must not grant a free shot');
+
+  for (let i = 1; i < spec.fireDelayTicks; i += 1) tickWeapon(player);
+  assert.equal(canFire(player), false, `cooling at tick ${spec.fireDelayTicks - 1}`);
+  tickWeapon(player);
+  assert.equal(player.cooldown, 0);
+  assert.equal(fireWeapon(player).fired, true, 'fires once fireDelayTicks have elapsed');
+});
+
+test('a holstered weapon keeps cooling down', () => {
+  const spec = WEAPONS.pistol;
+  const player = createPlayer({ weapon: 'pistol' });
+  fireWeapon(player);
+
+  switchToSlot(player, 1);
+  for (let i = 0; i < 4; i += 1) tickWeapon(player);
+
+  switchToSlot(player, 0);
+  assert.equal(player.cooldown, spec.fireDelayTicks - 4);
+  assert.equal(canFire(player), false);
+});
+
 test('cycleWeapon walks the slot list and wraps in both directions', () => {
   const player = createPlayer({ weapon: 'pistol' });
   assert.equal(cycleWeapon(player, 1), 'smg');
@@ -288,6 +326,50 @@ test('number keys and the wheel switch weapons through the game input', () => {
   update(game);
   assert.equal(game.player.weapon, 'shotgun');
   assert.equal(game.input.cycleWeapon, 0, 'wheel accumulator is consumed');
+});
+
+test('the wheel applies every accumulated step in one tick', () => {
+  const map = makeMap(40, 40);
+  const game = createGame({ map, spawn: { x: 320, y: 320 }, seed: 7 });
+
+  game.input.cycleWeapon = 2;
+  update(game);
+  assert.equal(game.player.weapon, 'shotgun', 'two forward steps from pistol');
+  assert.equal(game.input.cycleWeapon, 0);
+
+  game.input.cycleWeapon = -2;
+  update(game);
+  assert.equal(game.player.weapon, 'pistol', 'two back steps from shotgun');
+});
+
+test('switching away and back through game input keeps the fire delay', () => {
+  const map = makeMap(40, 40);
+  const game = createGame({ map, spawn: { x: 320, y: 320 }, seed: 7 });
+  game.player.aim = 0;
+  const spec = WEAPONS.pistol;
+
+  game.input.fire = true;
+  update(game);
+  assert.equal(game.player.ammo, spec.magazineSize - 1);
+
+  game.input.fire = false;
+  game.input.weapon2 = true;
+  update(game);
+  assert.equal(game.player.weapon, 'smg');
+
+  game.input.weapon1 = true;
+  update(game);
+  assert.equal(game.player.weapon, 'pistol');
+
+  game.input.fire = true;
+  update(game);
+  assert.equal(game.player.ammo, spec.magazineSize - 1, 'no free shot after switching back');
+
+  game.input.fire = false;
+  for (let i = 0; i < spec.fireDelayTicks; i += 1) update(game);
+  game.input.fire = true;
+  update(game);
+  assert.equal(game.player.ammo, spec.magazineSize - 2, 'fires only after the full delay');
 });
 
 test('fireWeapon tolerates invalid / missing state', () => {

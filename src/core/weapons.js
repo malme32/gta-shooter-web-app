@@ -139,12 +139,25 @@ export function completeReload(player) {
  * Advance weapon timers by one tick, completing a reload exactly when its
  * countdown reaches zero.
  *
+ * Every weapon's cooldown is ticked, not just the equipped one, so holstering a
+ * weapon cannot freeze its firing delay. `player.cooldown` is then re-synced
+ * from the equipped weapon's arsenal entry.
+ *
  * @param {object} player
  * @returns {boolean} `true` when a reload completed this tick.
  */
 export function tickWeapon(player) {
   if (!player) return false;
-  if (player.cooldown > 0) player.cooldown -= 1;
+
+  if (player.weapons && typeof player.weapons === 'object') {
+    for (const entry of Object.values(player.weapons)) {
+      if (entry && Number.isFinite(entry.cooldown) && entry.cooldown > 0) entry.cooldown -= 1;
+    }
+    const equipped = player.weapons[player.weapon];
+    player.cooldown = Number.isFinite(equipped?.cooldown) ? Math.max(0, equipped.cooldown) : 0;
+  } else if (player.cooldown > 0) {
+    player.cooldown -= 1;
+  }
 
   let completed = false;
   if (player.reloadTicks > 0) {
@@ -158,37 +171,41 @@ export function tickWeapon(player) {
 }
 
 /**
- * Copy the equipped weapon's live ammo back into the per-weapon table.
+ * Copy the equipped weapon's live ammo and cooldown back into its table entry.
  *
  * @param {object} player
  */
-function saveWeaponAmmo(player) {
+function saveWeaponState(player) {
   if (!player?.weapons) return;
   const entry = player.weapons[player.weapon];
   if (entry) {
     entry.ammo = player.ammo;
     entry.reserve = player.reserve;
+    entry.cooldown = Number.isFinite(player.cooldown) ? Math.max(0, player.cooldown) : 0;
   }
 }
 
 /**
- * Load a weapon's ammo from the per-weapon table into the live fields.
+ * Load a weapon's ammo and cooldown from its table entry into the live fields.
+ * A weapon that has never been fired starts ready (cooldown `0`).
  *
  * @param {object} player
  * @param {string} id
  */
-function loadWeaponAmmo(player, id) {
+function loadWeaponState(player, id) {
   const spec = weaponSpec(id);
   const entry = player.weapons?.[spec.id];
   player.weapon = spec.id;
   player.ammo = Number.isFinite(entry?.ammo) ? entry.ammo : spec.magazineSize;
   player.reserve = Number.isFinite(entry?.reserve) ? entry.reserve : spec.reserveAmmo;
+  player.cooldown = Number.isFinite(entry?.cooldown) ? Math.max(0, entry.cooldown) : 0;
 }
 
 /**
- * Equip a weapon, preserving the previous weapon's ammo. A reload in progress
- * is cancelled (it would otherwise be spent on the wrong weapon) and the firing
- * cooldown is reset so the new weapon starts ready.
+ * Equip a weapon, preserving the previous weapon's ammo and cooldown. A reload
+ * in progress is cancelled (it would otherwise be spent on the wrong weapon).
+ * The incoming weapon's own remaining cooldown is restored, so switching away
+ * and back can never grant an extra shot before `fireDelayTicks` have elapsed.
  *
  * @param {object} player
  * @param {string} id
@@ -199,11 +216,10 @@ export function switchWeapon(player, id) {
   const spec = WEAPONS[id];
   if (!spec || spec.id === player.weapon) return false;
 
-  saveWeaponAmmo(player);
-  loadWeaponAmmo(player, spec.id);
+  saveWeaponState(player);
+  loadWeaponState(player, spec.id);
   player.reloading = false;
   player.reloadTicks = 0;
-  player.cooldown = 0;
   return true;
 }
 
@@ -308,6 +324,8 @@ export function fireWeapon(player, { rng = Math.random, x = player?.x, y = playe
 
   player.ammo -= 1;
   player.cooldown = spec.fireDelayTicks;
+  const entry = player.weapons?.[spec.id];
+  if (entry) entry.cooldown = spec.fireDelayTicks;
 
   return { fired: true, spec, angles: offsets.map((offset) => muzzleAngle + offset), bullets };
 }
