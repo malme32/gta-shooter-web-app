@@ -54,6 +54,7 @@ export const ENTITY_SPRITES = Object.freeze({
   vehicle: Object.freeze({ shape: 'vehicle', width: 34, height: 20, color: '#f97316', outline: '#7c2d12' }),
   pedestrian: Object.freeze({ shape: 'person', radius: 8, color: '#f472b6', outline: '#831843' }),
   enemy: Object.freeze({ shape: 'person', radius: 10, color: '#f87171', outline: '#7f1d1d' }),
+  police: Object.freeze({ shape: 'person', radius: 11, color: '#60a5fa', outline: '#1e3a8a' }),
   bullet: Object.freeze({ shape: 'bullet', radius: 4, color: '#fde047', outline: '#a16207' }),
   pickup: Object.freeze({ shape: 'pickup', radius: 9, color: '#a3e635', outline: '#3f6212' }),
   default: Object.freeze({ shape: 'circle', radius: 10, color: '#94a3b8', outline: '#334155' }),
@@ -61,6 +62,7 @@ export const ENTITY_SPRITES = Object.freeze({
 
 /** @param {object} [entity] @returns {object} */
 export function spriteFor(entity) {
+  if (entity?.police) return ENTITY_SPRITES.police;
   return ENTITY_SPRITES[entity?.kind] ?? ENTITY_SPRITES.default;
 }
 
@@ -230,6 +232,7 @@ export function snapshotScene(game) {
     entities: collectEntities(game).map((entity) => ({
       id: entity.id,
       kind: entity.kind,
+      police: entity.police,
       x: entity.x,
       y: entity.y,
       radius: entity.radius,

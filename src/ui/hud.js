@@ -30,6 +30,9 @@ export const HUD_COLORS = Object.freeze({
   muted: '#8b98a9',
   star: '#facc15',
   starEmpty: 'rgba(148, 163, 184, 0.35)',
+  sirenRed: '#ef4444',
+  sirenBlue: '#38bdf8',
+  sirenOff: 'rgba(148, 163, 184, 0.25)',
   cash: '#4ade80',
   danger: '#ef4444',
 });
@@ -104,6 +107,35 @@ export function formatCash(amount) {
   return `$${value.toLocaleString('en-US')}`;
 }
 
+/** Half-period of the HUD siren flash, in simulation ticks. */
+export const SIREN_BLINK_TICKS = 20;
+
+/**
+ * Alternate the siren flash phase from the simulation tick, so the red/blue
+ * lights blink deterministically instead of per-frame.
+ *
+ * @param {number} tick Simulation tick.
+ * @param {number} [periodTicks=SIREN_BLINK_TICKS]
+ * @returns {boolean} `true` on the red phase, `false` on the blue phase.
+ */
+export function sirenBlink(tick, periodTicks = SIREN_BLINK_TICKS) {
+  const period = Number.isFinite(periodTicks) && periodTicks > 0 ? Math.floor(periodTicks) : SIREN_BLINK_TICKS;
+  const value = Number.isFinite(tick) ? Math.floor(tick) : 0;
+  return Math.floor(value / period) % 2 === 0;
+}
+
+/**
+ * Is the siren currently sounding? Prefers the explicit `sirenActive` flag the
+ * core sets, falling back to "any wanted level".
+ *
+ * @param {object} game Game state (or a partial HUD model).
+ * @returns {boolean}
+ */
+export function sirenActive(game) {
+  if (typeof game?.sirenActive === 'boolean') return game.sirenActive;
+  return Number.isFinite(game?.wanted) && game.wanted >= 1;
+}
+
 /**
  * The vehicle the player is currently driving, or `null`.
  *
@@ -164,6 +196,16 @@ export function computeHudLayout(width, height) {
   const cashWidth = clamp(w * 0.26, 72, 160);
   const cash = { x: w - pad - cashWidth, y: bottomY, width: cashWidth, height: 20 };
 
+  const sirenSize = 14;
+  const siren = {
+    x: wanted.x - sirenSize - 6,
+    y: wanted.y + (wanted.height - sirenSize) / 2,
+    width: sirenSize,
+    height: sirenSize,
+  };
+  const wantedVisible = wanted.x >= health.x + health.width + gap;
+  const cashVisible = cash.x >= weapon.x + weapon.width + gap;
+
   return {
     width: w,
     height: h,
@@ -174,9 +216,11 @@ export function computeHudLayout(width, height) {
     speed: { x: pad, y: ammo.y + ammo.height + 26, width: healthWidth, height: 16 },
     weapon,
     wanted,
+    siren,
     cash,
-    wantedVisible: wanted.x >= health.x + health.width + gap,
-    cashVisible: cash.x >= weapon.x + weapon.width + gap,
+    wantedVisible,
+    sirenVisible: wantedVisible && siren.x >= health.x + health.width + gap,
+    cashVisible,
     drivingVisible: ammo.y + ammo.height + 26 + 16 + gap <= weapon.y,
   };
 }
@@ -225,7 +269,7 @@ function drawStar(ctx, cx, cy, outer, lit) {
 }
 
 /**
- * Draw the wanted meter (five star outline placeholders).
+ * Draw the wanted meter (five star placeholders).
  *
  * @param {CanvasRenderingContext2D} ctx
  * @param {{ x: number, y: number, width: number, height: number }} rect
@@ -240,6 +284,30 @@ export function drawWanted(ctx, rect, wanted, maxStars = HUD_DEFAULTS.maxStars) 
   for (let i = 0; i < states.length; i += 1) {
     drawStar(ctx, rect.x + step * (i + 0.5), cy, radius, states[i]);
   }
+}
+
+function drawLamp(ctx, cx, cy, radius, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+/**
+ * Draw the police siren indicator: a red and a blue lamp that alternate.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {{ x: number, y: number, width: number, height: number }} rect
+ * @param {boolean} active Whether the siren is sounding.
+ * @param {boolean} [blink=true] Red phase when true, blue phase when false.
+ */
+export function drawSiren(ctx, rect, active, blink = true) {
+  const radius = Math.max(2, Math.min(rect.width, rect.height) / 2 - 1);
+  const cy = rect.y + rect.height / 2;
+  const redLit = active && blink;
+  const blueLit = active && !blink;
+  drawLamp(ctx, rect.x + radius + 1, cy, radius, redLit ? HUD_COLORS.sirenRed : HUD_COLORS.sirenOff);
+  drawLamp(ctx, rect.x + rect.width - radius - 1, cy, radius, blueLit ? HUD_COLORS.sirenBlue : HUD_COLORS.sirenOff);
 }
 
 /**
@@ -322,6 +390,10 @@ export function renderHud(ctx, game, size) {
       font: 15,
       align: 'right',
     });
+  }
+
+  if (layout.sirenVisible && sirenActive(game)) {
+    drawSiren(ctx, layout.siren, true, sirenBlink(game.tick));
   }
 
   if (layout.wantedVisible) {

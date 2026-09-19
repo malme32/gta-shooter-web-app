@@ -67,6 +67,7 @@ import { applyBulletDamage } from './bullet.js';
  * @property {boolean} alive
  * @property {number} aim Facing angle, in radians.
  * @property {number} cooldown Ticks until the next shot may be fired.
+ * @property {boolean} police Whether this is a police responder (wanted system).
  * @property {string} state Current AI state (see `core/ai.js`).
  * @property {number} lostTicks Ticks since the target was last seen.
  * @property {number} idleTicks Ticks spent idle.
@@ -96,10 +97,21 @@ import { applyBulletDamage } from './bullet.js';
  * @property {number} bulletSpeed Muzzle velocity override, in pixels per second.
  * @property {number} bulletRange Effective range override, in pixels.
  * @property {LootSpec} loot
+ * @property {boolean} [police] Marks a police responder spawned by the wanted
+ *   system (`core/wanted.js`); civilians leave this unset.
  */
 
 /** Archetype ids in a fixed order, for deterministic spawning. @type {ReadonlyArray<string>} */
 export const ENEMY_TYPE_IDS = Object.freeze(['thug', 'shooter', 'brute']);
+
+/**
+ * Police archetype ids in escalating order of strength. The wanted system
+ * spawns these by star level (`core/wanted.js`); they are deliberately kept out
+ * of {@link ENEMY_TYPE_IDS} so a map's ambient squad never starts with police.
+ *
+ * @type {ReadonlyArray<string>}
+ */
+export const POLICE_TYPE_IDS = Object.freeze(['cop', 'swat', 'riot']);
 
 /**
  * Frozen archetype tuning table.
@@ -191,7 +203,102 @@ export const ENEMY_TYPES = Object.freeze({
       ]),
     }),
   }),
+  cop: Object.freeze({
+    id: 'cop',
+    name: 'Police Officer',
+    police: true,
+    maxHealth: 90,
+    armour: 10,
+    radius: 11,
+    speed: 118,
+    sightRange: 460,
+    attackRange: 320,
+    loseSightTicks: 240,
+    idleTicks: 24,
+    fireDelayTicks: 28,
+    damage: 9,
+    spreadRad: 0.08,
+    pellets: 1,
+    weapon: 'pistol',
+    bulletSpeed: 700,
+    bulletRange: 460,
+    loot: Object.freeze({
+      chance: 0.4,
+      table: Object.freeze([
+        Object.freeze({ type: 'cash', weight: 3, min: 15, max: 45 }),
+        Object.freeze({ type: 'ammo', weight: 3, min: 6, max: 16 }),
+        Object.freeze({ type: 'armour', weight: 2, min: 10, max: 25 }),
+      ]),
+    }),
+  }),
+  swat: Object.freeze({
+    id: 'swat',
+    name: 'SWAT Officer',
+    police: true,
+    maxHealth: 140,
+    armour: 50,
+    radius: 12,
+    speed: 124,
+    sightRange: 500,
+    attackRange: 380,
+    loseSightTicks: 280,
+    idleTicks: 18,
+    fireDelayTicks: 14,
+    damage: 10,
+    spreadRad: 0.06,
+    pellets: 1,
+    weapon: 'smg',
+    bulletSpeed: 760,
+    bulletRange: 500,
+    loot: Object.freeze({
+      chance: 0.6,
+      table: Object.freeze([
+        Object.freeze({ type: 'cash', weight: 2, min: 30, max: 80 }),
+        Object.freeze({ type: 'ammo', weight: 4, min: 10, max: 24 }),
+        Object.freeze({ type: 'armour', weight: 3, min: 20, max: 40 }),
+      ]),
+    }),
+  }),
+  riot: Object.freeze({
+    id: 'riot',
+    name: 'Riot Trooper',
+    police: true,
+    maxHealth: 260,
+    armour: 90,
+    radius: 16,
+    speed: 84,
+    sightRange: 340,
+    attackRange: 170,
+    loseSightTicks: 300,
+    idleTicks: 30,
+    fireDelayTicks: 55,
+    damage: 13,
+    spreadRad: 0.2,
+    pellets: 6,
+    weapon: 'shotgun',
+    bulletSpeed: 620,
+    bulletRange: 280,
+    loot: Object.freeze({
+      chance: 0.8,
+      table: Object.freeze([
+        Object.freeze({ type: 'cash', weight: 2, min: 60, max: 140 }),
+        Object.freeze({ type: 'ammo', weight: 3, min: 12, max: 26 }),
+        Object.freeze({ type: 'health', weight: 2, min: 30, max: 55 }),
+        Object.freeze({ type: 'armour', weight: 3, min: 30, max: 55 }),
+      ]),
+    }),
+  }),
 });
+
+/**
+ * Is this actor a police responder spawned by the wanted system?
+ *
+ * @param {object} [enemy]
+ * @returns {boolean}
+ */
+export function isPolice(enemy) {
+  return Boolean(enemy) && enemy.police === true;
+}
 
 /** Pickup collision radius, in world pixels. */
 export const PICKUP_RADIUS = 10;
@@ -242,6 +349,7 @@ export function createEnemy({ id = -1, type = 'thug', x = 0, y = 0, health, armo
     alive: startHealth > 0,
     aim: 0,
     cooldown: 0,
+    police: spec.police === true,
     state: 'idle',
     lostTicks: 0,
     idleTicks: 0,

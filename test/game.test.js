@@ -22,6 +22,7 @@ import {
   CAMERA_DEADZONE_X,
   CAMERA_DEADZONE_Y,
 } from '../src/core/constants.js';
+import { WANTED_DECAY_COOLDOWN_TICKS } from '../src/core/wanted.js';
 
 function makeMap(width, height, solids = []) {
   const tiles = new Array(width * height).fill(0);
@@ -289,11 +290,18 @@ test('addHeat clamps to the maximum and refreshes the wanted level', () => {
   assert.equal(state.wanted, 5);
 });
 
-test('heat decays a little every tick', () => {
+test('wanted points hold during the crime-free cooldown, then decay', () => {
   const state = createGame({ map: makeMap(4, 4) });
   addHeat(state, 100);
+  assert.equal(state.heat, 100);
+  assert.equal(state.wantedCooldown, WANTED_DECAY_COOLDOWN_TICKS);
+
   update(state);
-  assert.ok(state.heat < 100);
+  assert.equal(state.heat, 100, 'points do not decay during the cooldown');
+  assert.equal(state.wantedCooldown, WANTED_DECAY_COOLDOWN_TICKS - 1);
+
+  for (let i = 0; i < WANTED_DECAY_COOLDOWN_TICKS + 10; i += 1) update(state);
+  assert.ok(state.heat < 100, 'points decay once the cooldown has elapsed');
   assert.equal(state.wanted, getWantedStars(state.heat));
 });
 
