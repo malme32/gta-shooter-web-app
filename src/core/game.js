@@ -19,9 +19,6 @@ import {
   CAMERA_DEADZONE_Y,
   CAMERA_LERP_PER_TICK,
   CAMERA_SETTLE_EPSILON,
-  WANTED_THRESHOLDS,
-  WANTED_MAX_HEAT,
-  WANTED_HEAT_DECAY_PER_TICK,
   WEAPON_SLOTS,
   VEHICLE_EXPLOSION_HEAT,
 } from './constants.js';
@@ -56,8 +53,19 @@ import {
   runOverDamageTick,
   explodeVehicle,
 } from './vehicle.js';
-import { ENEMY_TYPE_IDS, createEnemy, isEnemyAlive, enemySpec, rollLoot, createPickup } from './enemy.js';
+import { ENEMY_TYPE_IDS, createEnemy, isEnemyAlive, isPolice, enemySpec, rollLoot, createPickup } from './enemy.js';
 import { aiTick } from './ai.js';
+import {
+  wantedLevelFor,
+  addWantedPoints,
+  decayWantedPoints,
+  policeSpawnStep,
+  policeDespawnCount,
+  policeSpawnPoint,
+  isBusted,
+  sirenActiveFor,
+  WANTED_DECAY_COOLDOWN_TICKS,
+} from './wanted.js';
 
 /**
  * @typedef {object} GameInput
@@ -111,6 +119,11 @@ import { aiTick } from './ai.js';
  * @property {{ width: number, height: number }} viewport
  * @property {number} heat
  * @property {number} wanted
+ * @property {number} wantedCooldown Ticks left before wanted points decay.
+ * @property {number} policeSpawnTimer Ticks left before the next police spawn.
+ * @property {boolean} busted Whether the 5-star terminal state was reached.
+ * @property {number} sirenLevel Wanted level described by the last siren event.
+ * @property {boolean} sirenActive Whether the siren is currently sounding.
  * @property {boolean} gameOver
  * @property {boolean} paused
  */
@@ -357,6 +370,11 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles
     cameraDeadZone: normalizeDeadZone(deadZone),
     heat: 0,
     wanted: 0,
+    wantedCooldown: 0,
+    policeSpawnTimer: 0,
+    busted: false,
+    sirenLevel: 0,
+    sirenActive: false,
     gameOver: false,
     paused: false,
     spawn: spawnPoint,
@@ -396,6 +414,11 @@ export function restart(state) {
   state.events = [];
   state.heat = 0;
   state.wanted = 0;
+  state.wantedCooldown = 0;
+  state.policeSpawnTimer = 0;
+  state.busted = false;
+  state.sirenLevel = 0;
+  state.sirenActive = false;
   state.gameOver = false;
   state.paused = false;
   if (state.input) {
@@ -449,23 +472,21 @@ export function drainEvents(state) {
  * @returns {number}
  */
 export function getWantedStars(heat) {
-  let stars = 0;
-  for (let i = 1; i < WANTED_THRESHOLDS.length; i += 1) {
-    if (heat >= WANTED_THRESHOLDS[i]) stars = i;
-  }
-  return stars;
+  return wantedLevelFor(heat);
 }
 
 /**
- * Add heat (capped at the top threshold) and refresh the wanted level.
+ * Add wanted points (capped at the top threshold), reset the crime-free decay
+ * cooldown and refresh the wanted level.
  *
  * @param {GameState} state
  * @param {number} amount
  * @returns {number} The new heat value.
  */
 export function addHeat(state, amount) {
-  state.heat = clamp(state.heat + amount, 0, WANTED_MAX_HEAT);
-  state.wanted = getWantedStars(state.heat);
+  state.heat = addWantedPoints(state.heat, amount);
+  state.wanted = wantedLevelFor(state.heat);
+  state.wantedCooldown = WANTED_DECAY_COOLDOWN_TICKS;
   return state.heat;
 }
 
@@ -883,11 +904,143 @@ function updatePlayerDeath(state) {
   }
 }
 
-function updateWanted(state) {
-  if (state.heat > 0) {
-    state.heat = Math.max(0, state.heat - WANTED_HEAT_DECAY_PER_TICK);
+/**
+ * How many live police responders the game currently has.
+ *
+ * @param {GameState} state
+ * @returns {number}
+ */
+function countAlivePolice(state) {
+  if (!Array.isArray(state.enemies)) return 0;
+  let count = 0;
+  for (const enemy of state.enemies) {
+    if (isPolice(enemy) && isEnemyAlive(enemy)) count += 1;
   }
-  state.wanted = getWantedStars(state.heat);
+  return count;
+}
+
+/**
+ * Remove police responders (then emit `police_despawn`), newest first. Used
+ * when the wanted level drops or resets to zero.
+ *
+ * @param {GameState} state
+ * @param {number} count
+ * @returns {number} How many were actually removed.
+ */
+function despawnPolice(state, count) {
+  if (!Array.isArray(state.enemies)) return 0;
+  let remaining = Math.max(0, Math.floor(count));
+  let removed = 0;
+  for (let i = state.enemies.length - 1; i >= 0 && remaining > 0; i -= 1) {
+    const enemy = state.enemies[i];
+    if (!isPolice(enemy)) continue;
+    state.enemies.splice(i, 1);
+    remaining -= 1;
+    removed += 1;
+    emitEvent(state, 'police_despawn', {
+      enemyId: enemy.id,
+      enemyType: enemy.type,
+      x: enemy.x,
+      y: enemy.y,
+      wanted: state.wanted,
+    });
+  }
+  return removed;
+}
+
+/**
+ * Spawn one police responder of `variant` on a walkable ring around the player.
+ * Returns `null` when no valid spawn point is available.
+ *
+ * @param {GameState} state
+ * @param {string} variant
+ * @returns {object|null}
+ */
+function spawnPolice(state, variant) {
+  const spec = enemySpec(variant);
+  const point = policeSpawnPoint(state.grid, state.player.x, state.player.y, {
+    rng: state.rng,
+    radius: spec.radius,
+  });
+  if (!point) return null;
+
+  const enemy = createEnemy({ id: state.nextEnemyId, type: variant, x: point.x, y: point.y });
+  state.nextEnemyId += 1;
+  state.enemies.push(enemy);
+  emitEvent(state, 'police_spawn', {
+    enemyId: enemy.id,
+    enemyType: enemy.type,
+    x: enemy.x,
+    y: enemy.y,
+    wanted: state.wanted,
+  });
+  return enemy;
+}
+
+/**
+ * Match the live police force to the current wanted level: despawn the excess
+ * (all of it at level 0) then spawn reinforcements up to the level's roster.
+ *
+ * @param {GameState} state
+ */
+function updatePolice(state) {
+  if (!Array.isArray(state.enemies)) return;
+
+  const excess = policeDespawnCount(state.wanted, countAlivePolice(state));
+  if (excess > 0) despawnPolice(state, excess);
+
+  const step = policeSpawnStep({
+    level: state.wanted,
+    alivePolice: countAlivePolice(state),
+    spawnTimer: state.policeSpawnTimer,
+  });
+  state.policeSpawnTimer = step.spawnTimer;
+  if (step.variant) spawnPolice(state, step.variant);
+}
+
+/**
+ * Emit a `siren` event whenever the wanted level (and therefore the siren
+ * state) changes, so the renderer/audio layer can react.
+ *
+ * @param {GameState} state
+ */
+function updateSiren(state) {
+  const active = sirenActiveFor(state.wanted);
+  if (state.wanted === state.sirenLevel && active === state.sirenActive) return;
+  const previousLevel = state.sirenLevel;
+  state.sirenLevel = state.wanted;
+  state.sirenActive = active;
+  emitEvent(state, 'siren', { active, level: state.wanted, previousLevel });
+}
+
+/**
+ * Reaching {@link BUSTED_LEVEL} stars is terminal: flag `busted`, emit the
+ * event and end the run.
+ *
+ * @param {GameState} state
+ */
+function updateBusted(state) {
+  if (state.busted || !isBusted(state.wanted)) return;
+  state.busted = true;
+  emitEvent(state, 'busted', { level: state.wanted, x: state.player.x, y: state.player.y });
+  state.gameOver = true;
+}
+
+/**
+ * Advance the wanted system one tick: crime-free decay, police escalation,
+ * the siren event and the 5-star busted check.
+ *
+ * @param {GameState} state
+ */
+function updateWanted(state) {
+  const decayed = decayWantedPoints(state.heat, state.wantedCooldown);
+  state.heat = decayed.points;
+  state.wantedCooldown = decayed.cooldownTicks;
+  state.wanted = wantedLevelFor(state.heat);
+
+  updatePolice(state);
+  updateSiren(state);
+  updateBusted(state);
 }
 
 /**

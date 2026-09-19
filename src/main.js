@@ -107,7 +107,7 @@ function bootstrap() {
   const status = document.getElementById('status');
   if (status) {
     status.textContent =
-      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving. Hostiles patrol the streets.';
+      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving. Hostiles patrol the streets; crimes draw escalating police attention.';
   }
 
   let dpr = syncCanvasSize(canvas, ctx, game);
@@ -140,7 +140,7 @@ function bootstrap() {
 
     if (status && frameCount % 30 === 0) {
       const p = game.player;
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve} · threats ${game.enemies.length} · $${game.cash}`;
+      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted}${game.sirenActive ? ' (siren)' : ''} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve} · threats ${game.enemies.length} · $${game.cash}`;
     }
 
     requestAnimationFrame(frame);
