@@ -7,88 +7,78 @@
  * of ticks against it. `advance()` clamps both the frame delta and the number
  * of steps, so a backgrounded tab cannot make the simulation spiral.
  *
- * Keyboard and mouse handling live in `src/ui/input.js`; they only ever mutate
- * the plain intent object owned by the game state, which keeps the core pure.
+ * Because the simulation runs at 60 Hz but displays may refresh at 120/144 Hz,
+ * the renderer draws an **interpolated** scene: the previous tick's snapshot is
+ * blended with the current one using `alphaFor(game.accumulator)`. This keeps
+ * motion smooth on high-refresh displays without changing gameplay.
+ *
+ * Rendering lives in `src/ui/render.js` and the HUD in `src/ui/hud.js`; input
+ * handling in `src/ui/input.js`. The canvas backing store is scaled by the
+ * device pixel ratio so it is crisp, while the camera works in logical pixels.
  *
  * The `document` guard keeps the module importable under Node for tests that
  * only exercise `src/core/`.
  */
 
-import { createGame, advance } from './core/game.js';
-import { TILE_SIZE } from './core/constants.js';
-import { createMap, ROAD, SIDEWALK, BUILDING, GRASS } from './core/map.js';
+import { createGame, setViewport } from './core/game.js';
+import { createMap } from './core/map.js';
 import { createInput } from './ui/input.js';
+import {
+  clearCanvas,
+  renderWorld,
+  sampleFrame,
+  snapshotScene,
+} from './ui/render.js';
+import { renderHud, weaponLabel } from './ui/hud.js';
 
-const TILE_COLORS = {
-  [ROAD]: '#111827',
-  [SIDEWALK]: '#334155',
-  [BUILDING]: '#1e293b',
-  [GRASS]: '#14532d',
-};
+/**
+ * Last CSS size seen from `getBoundingClientRect()`.
+ *
+ * The canvas backing store is DPR-scaled, so `canvas.width`/`canvas.height`
+ * are physical pixels and must never be used as a CSS fallback: doing so would
+ * compound the backing size every frame whenever the element is temporarily
+ * detached (rect reports zero). Remembering the last good CSS size avoids that.
+ */
+let lastCssSize = { width: 0, height: 0 };
 
-function render(ctx, canvas, game) {
-  const { camera, grid } = game;
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.fillStyle = '#05070b';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.save();
-  ctx.translate(-camera.x, -camera.y);
-
-  const minTx = Math.max(0, Math.floor(camera.x / TILE_SIZE));
-  const maxTx = Math.min(grid.width - 1, Math.ceil((camera.x + camera.width) / TILE_SIZE));
-  const minTy = Math.max(0, Math.floor(camera.y / TILE_SIZE));
-  const maxTy = Math.min(grid.height - 1, Math.ceil((camera.y + camera.height) / TILE_SIZE));
-
-  for (let ty = minTy; ty <= maxTy; ty += 1) {
-    for (let tx = minTx; tx <= maxTx; tx += 1) {
-      ctx.fillStyle = TILE_COLORS[grid.tiles[ty * grid.width + tx]] ?? '#1e293b';
-      ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-    }
+function cssSize(canvas) {
+  const rect = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect() : null;
+  if (rect && rect.width > 0 && rect.height > 0) {
+    lastCssSize = { width: rect.width, height: rect.height };
   }
-
-  renderPlayer(ctx, game.player);
-  ctx.restore();
-
-  renderHud(ctx, game);
+  return {
+    width: lastCssSize.width > 0 ? lastCssSize.width : 960,
+    height: lastCssSize.height > 0 ? lastCssSize.height : 540,
+  };
 }
 
-function renderPlayer(ctx, player) {
-  ctx.save();
-  ctx.translate(player.x, player.y);
-  ctx.rotate(player.aim);
+/**
+ * Resize the backing store to the CSS size at the current device pixel ratio.
+ *
+ * The CSS box is never touched (styles.css sizes the canvas), so this only
+ * changes the number of physical pixels and the camera viewport.
+ *
+ * @param {HTMLCanvasElement} canvas
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} game
+ * @returns {number} The device pixel ratio in use.
+ */
+function syncCanvasSize(canvas, ctx, game) {
+  const { width, height } = cssSize(canvas);
+  const dpr = Math.min(globalThis.devicePixelRatio || 1, 2);
+  const backingWidth = Math.max(1, Math.round(width * dpr));
+  const backingHeight = Math.max(1, Math.round(height * dpr));
 
-  ctx.strokeStyle = '#e0f2fe';
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.moveTo(player.radius * 0.4, 0);
-  ctx.lineTo(player.radius + 10, 0);
-  ctx.stroke();
-
-  ctx.fillStyle = player.alive ? '#7dd3fc' : '#64748b';
-  ctx.beginPath();
-  ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-function bar(ctx, x, y, width, height, ratio, color, label) {
-  ctx.fillStyle = 'rgba(2, 6, 23, 0.7)';
-  ctx.fillRect(x - 1, y - 1, width + 2, height + 2);
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, width * Math.max(0, Math.min(1, ratio)), height);
-  if (label) {
-    ctx.fillStyle = '#e2e8f0';
-    ctx.font = '12px system-ui, sans-serif';
-    ctx.fillText(label, x + width + 8, y + height - 1);
+  if (canvas.width !== backingWidth || canvas.height !== backingHeight) {
+    canvas.width = backingWidth;
+    canvas.height = backingHeight;
   }
-}
+  ctx.imageSmoothingEnabled = true;
 
-function renderHud(ctx, game) {
-  const p = game.player;
-  bar(ctx, 12, 12, 160, 12, p.health / p.maxHealth, '#22c55e', `HP ${Math.round(p.health)}`);
-  bar(ctx, 12, 30, 160, 12, p.armour / p.maxArmour, '#38bdf8', `AP ${Math.round(p.armour)}`);
+  if (game.viewport?.width !== width || game.viewport?.height !== height) {
+    setViewport(game, width, height);
+  }
+  return dpr;
 }
 
 function bootstrap() {
@@ -102,12 +92,13 @@ function bootstrap() {
     return;
   }
 
+  const initial = cssSize(canvas);
   const map = createMap({ seed: 1337 });
   const game = createGame({
     map,
     spawn: map.spawns.playerStart,
     seed: 1337,
-    viewport: { width: canvas.width, height: canvas.height },
+    viewport: initial,
   });
 
   const input = createInput({ intent: game.input, canvas, target: window });
@@ -118,25 +109,47 @@ function bootstrap() {
     status.textContent = 'City online — WASD/arrows move, Shift sprints, mouse aims.';
   }
 
+  let dpr = syncCanvasSize(canvas, ctx, game);
+  let prevSnapshot = snapshotScene(game);
+
   let last = performance.now();
   let frameCount = 0;
 
   function frame(now) {
-    advance(game, (now - last) / 1000);
+    const dt = (now - last) / 1000;
     last = now;
     frameCount += 1;
 
-    render(ctx, canvas, game);
+    dpr = syncCanvasSize(canvas, ctx, game);
+    const sample = sampleFrame(game, dt, prevSnapshot);
+    prevSnapshot = sample.prevSnapshot;
+
+    const { width, height } = game.viewport;
+    const scene = sample.scene;
+
+    clearCanvas(ctx, { width, height, dpr });
+    renderWorld(ctx, { grid: game.grid, camera: scene.camera, player: scene.player, entities: scene.entities });
+    renderHud(ctx, game, { width, height });
 
     if (status && frameCount % 30 === 0) {
       const p = game.player;
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)}`;
+      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${weaponLabel(p.weapon)}`;
     }
 
     requestAnimationFrame(frame);
   }
 
-  window.addEventListener('beforeunload', () => input.dispose());
+  // The frame loop already re-syncs every frame, but reacting to `resize`
+  // applies the new camera viewport immediately instead of one frame later.
+  const onResize = () => {
+    dpr = syncCanvasSize(canvas, ctx, game);
+  };
+  window.addEventListener('resize', onResize);
+
+  window.addEventListener('beforeunload', () => {
+    input.dispose();
+    window.removeEventListener('resize', onResize);
+  });
   requestAnimationFrame(frame);
 }
 
