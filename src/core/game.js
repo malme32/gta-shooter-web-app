@@ -189,9 +189,14 @@ function normalizeGrid(map) {
 }
 
 function resolveRng(rng, seed) {
-  if (typeof rng === 'function') return rng;
+  const hasRngFunction = typeof rng === 'function';
+  const hasNumericSeed = typeof seed === 'number';
+  if (hasRngFunction && hasNumericSeed) {
+    throw new Error('createGame accepts either a function rng or a numeric seed, not both');
+  }
+  if (hasRngFunction) return rng;
   if (typeof rng === 'number') return createRng(rng);
-  if (typeof seed === 'number') return createRng(seed);
+  if (hasNumericSeed) return createRng(seed);
   if (rng === undefined || rng === null) return Math.random;
   throw new Error('rng must be a function or a numeric seed');
 }
@@ -269,7 +274,11 @@ function resetVehicles(state) {
 export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles } = {}) {
   const grid = normalizeGrid(map);
   const resolvedRng = resolveRng(rng, seed);
-  const numericSeed = typeof seed === 'number' ? seed : typeof rng === 'number' ? rng : null;
+  let numericSeed = null;
+  if (typeof rng !== 'function') {
+    if (typeof seed === 'number') numericSeed = seed;
+    else if (typeof rng === 'number') numericSeed = rng;
+  }
   const spawnPoint = spawn ? { x: spawn.x, y: spawn.y } : defaultSpawn(grid);
 
   /** @type {GameState} */
@@ -310,6 +319,10 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles
  * was created with a numeric seed the rng is rewound so the restart is
  * reproducible.
  *
+ * The existing `input` object is cleared in place rather than replaced, so
+ * references captured elsewhere (for example the keyboard listeners bound in
+ * `src/main.js`) stay valid across a restart.
+ *
  * @param {GameState} state
  * @returns {GameState}
  */
@@ -326,7 +339,11 @@ export function restart(state) {
   state.wanted = 0;
   state.gameOver = false;
   state.paused = false;
-  Object.assign(state.input, emptyInput());
+  if (state.input) {
+    Object.assign(state.input, emptyInput());
+  } else {
+    state.input = emptyInput();
+  }
   if (state.seed !== null) {
     state.rng = createRng(state.seed);
   }
@@ -446,6 +463,41 @@ export function snapCamera(state) {
   const target = cameraTarget(camera, cameraDeadZone, state.player);
   state.camera = clampCamera(state.grid, { x: target.x, y: target.y, width: camera.width, height: camera.height });
   return state.camera;
+}
+
+/**
+ * Apply a new canvas viewport size to the game state.
+ *
+ * The camera carries its own `width`/`height`, captured from the viewport at
+ * creation time; the dead-zone, follow and clamp maths all read them. A canvas
+ * or window resize must therefore refresh both the viewport **and** the camera
+ * dimensions, otherwise the camera keeps framing for the old size and the
+ * player drifts off-screen. The camera is re-centred on the player for the new
+ * size and clamped to the map, so the dead-zone centre matches the visible
+ * area immediately.
+ *
+ * @param {GameState} state
+ * @param {number} width New viewport width, in logical pixels.
+ * @param {number} height New viewport height, in logical pixels.
+ * @returns {{ width: number, height: number }} The normalised viewport applied.
+ */
+export function setViewport(state, width, height) {
+  if (!state || typeof state !== 'object') {
+    throw new TypeError('setViewport requires a game state');
+  }
+  const viewport = normalizeViewport({ width, height });
+  state.viewport = viewport;
+
+  if (state.camera) {
+    state.camera = {
+      x: state.camera.x,
+      y: state.camera.y,
+      width: viewport.width,
+      height: viewport.height,
+    };
+    state.camera = state.player ? snapCamera(state) : clampCamera(state.grid, state.camera);
+  }
+  return viewport;
 }
 
 /**
