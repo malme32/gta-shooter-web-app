@@ -150,9 +150,14 @@ function normalizeGrid(map) {
 }
 
 function resolveRng(rng, seed) {
-  if (typeof rng === 'function') return rng;
+  const hasRngFunction = typeof rng === 'function';
+  const hasNumericSeed = typeof seed === 'number';
+  if (hasRngFunction && hasNumericSeed) {
+    throw new Error('createGame accepts either a function rng or a numeric seed, not both');
+  }
+  if (hasRngFunction) return rng;
   if (typeof rng === 'number') return createRng(rng);
-  if (typeof seed === 'number') return createRng(seed);
+  if (hasNumericSeed) return createRng(seed);
   if (rng === undefined || rng === null) return Math.random;
   throw new Error('rng must be a function or a numeric seed');
 }
@@ -200,7 +205,11 @@ function resetCamera(state) {
 export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
   const grid = normalizeGrid(map);
   const resolvedRng = resolveRng(rng, seed);
-  const numericSeed = typeof seed === 'number' ? seed : typeof rng === 'number' ? rng : null;
+  let numericSeed = null;
+  if (typeof rng !== 'function') {
+    if (typeof seed === 'number') numericSeed = seed;
+    else if (typeof rng === 'number') numericSeed = rng;
+  }
   const spawnPoint = spawn ? { x: spawn.x, y: spawn.y } : defaultSpawn(grid);
 
   /** @type {GameState} */
@@ -235,6 +244,10 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
  * was created with a numeric seed the rng is rewound so the restart is
  * reproducible.
  *
+ * The existing `input` object is cleared in place rather than replaced, so
+ * references captured elsewhere (for example the keyboard listeners bound in
+ * `src/main.js`) stay valid across a restart.
+ *
  * @param {GameState} state
  * @returns {GameState}
  */
@@ -250,7 +263,11 @@ export function restart(state) {
   state.wanted = 0;
   state.gameOver = false;
   state.paused = false;
-  Object.assign(state.input, emptyInput());
+  if (state.input) {
+    Object.assign(state.input, emptyInput());
+  } else {
+    state.input = emptyInput();
+  }
   if (state.seed !== null) {
     state.rng = createRng(state.seed);
   }
