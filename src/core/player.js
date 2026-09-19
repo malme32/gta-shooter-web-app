@@ -59,6 +59,8 @@ import { moveCircle } from './map.js';
  *   weapons preserves each one's ammo and remaining cooldown.
  * @property {boolean} fireHeld Previous tick's trigger state, used for
  *   semi-automatic edge detection.
+ * @property {number|string|null} vehicleId Id of the vehicle being driven, or
+ *   `null` when on foot.
  */
 
 /**
@@ -132,6 +134,7 @@ export function createPlayer({
     reserve: arsenal[spec.id].reserve,
     weapons: arsenal,
     fireHeld: false,
+    vehicleId: null,
   };
 }
 

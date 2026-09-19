@@ -177,6 +177,57 @@ export const WEAPONS = Object.freeze({
  */
 export const WEAPON_SLOTS = Object.freeze(['pistol', 'smg', 'shotgun']);
 
+/** Vehicle health ceiling. */
+export const VEHICLE_MAX_HEALTH = 200;
+
+/** Acceleration applied while a throttle input is held, in pixels per second^2. */
+export const VEHICLE_ACCELERATION = 420;
+
+/** Braking deceleration applied when reversing while moving forward (px/s^2). */
+export const VEHICLE_BRAKE = 900;
+
+/** Top forward speed, in pixels per second. */
+export const VEHICLE_MAX_SPEED = 320;
+
+/** Top reverse speed, in pixels per second. */
+export const VEHICLE_REVERSE_SPEED = 140;
+
+/** Coasting deceleration applied with no throttle, in pixels per second^2. */
+export const VEHICLE_FRICTION = 180;
+
+/** Deceleration applied while the handbrake is held, in pixels per second^2. */
+export const VEHICLE_HANDBRAKE_DECEL = 1200;
+
+/** Turn rate at full speed, in radians per second. */
+export const VEHICLE_STEER_RATE = 3;
+
+/** Steering multiplier while the handbrake is held (arcade drift feel). */
+export const VEHICLE_HANDBRAKE_STEER_MULTIPLIER = 1.5;
+
+/** Fraction of speed kept after a collision with a building. */
+export const VEHICLE_CRASH_SPEED_FACTOR = 0.25;
+
+/** How close (centre to centre plus radii) a player must be to enter, in pixels. */
+export const VEHICLE_ENTER_RANGE = 64;
+
+/** Extra gap left between vehicle and player when choosing an exit spot. */
+export const VEHICLE_EXIT_CLEARANCE = 4;
+
+/** Minimum speed (px/s) at which a vehicle can run an entity over. */
+export const VEHICLE_RUNOVER_MIN_SPEED = 80;
+
+/** Base run-over damage; scaled between 50% and 100% by impact speed. */
+export const VEHICLE_RUNOVER_DAMAGE = 40;
+
+/** Radius of a vehicle explosion, in pixels. */
+export const VEHICLE_EXPLOSION_RADIUS = 96;
+
+/** Damage dealt to every entity inside the blast radius. */
+export const VEHICLE_EXPLOSION_DAMAGE = 80;
+
+/** Wanted heat added to the player when a vehicle they destroy explodes. */
+export const VEHICLE_EXPLOSION_HEAT = 25;
+
 /**
  * Heat needed to reach each wanted star. Index 0 is "clean" (zero stars), so
  * `WANTED_THRESHOLDS[n]` is the heat at which the player gains their nth star.

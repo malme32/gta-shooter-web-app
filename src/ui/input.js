@@ -37,6 +37,16 @@ export const KEY_ACTIONS = Object.freeze({
   Numpad2: 'weapon2',
   Digit3: 'weapon3',
   Numpad3: 'weapon3',
+  KeyE: 'enter',
+});
+
+/**
+ * Keys that additionally set a derived intent field. `Space` is both the
+ * trigger (on foot) and the handbrake (driving); the core decides which to use
+ * from the current context.
+ */
+export const DERIVED_KEYS = Object.freeze({
+  Space: 'handbrake',
 });
 
 /**
@@ -52,6 +62,8 @@ export const KEY_ACTIONS = Object.freeze({
  * @property {boolean} weapon2
  * @property {boolean} weapon3
  * @property {number} cycleWeapon Accumulated wheel steps (negative = up).
+ * @property {boolean} enter One-shot: enter/exit the nearest vehicle (key `E`).
+ * @property {boolean} handbrake Held while `Space` is down (handbrake while driving).
  * @property {number|null} pointerX Canvas-space pointer x, or `null` when unknown.
  * @property {number|null} pointerY Canvas-space pointer y, or `null` when unknown.
  */
@@ -74,6 +86,8 @@ export function createIntent() {
     weapon2: false,
     weapon3: false,
     cycleWeapon: 0,
+    enter: false,
+    handbrake: false,
     pointerX: null,
     pointerY: null,
   };
@@ -184,9 +198,13 @@ export function createInput({ intent = createIntent(), target = defaultTarget(),
 
   const onKeyDown = (event) => {
     if (applyKey(intent, event.code, true)) event.preventDefault?.();
+    const derived = DERIVED_KEYS[event.code];
+    if (derived) intent[derived] = true;
   };
   const onKeyUp = (event) => {
     if (applyKey(intent, event.code, false)) event.preventDefault?.();
+    const derived = DERIVED_KEYS[event.code];
+    if (derived) intent[derived] = false;
   };
   const onMouseMove = (event) => applyPointer(intent, event, canvas);
   const onMouseDown = (event) => {

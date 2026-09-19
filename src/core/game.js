@@ -23,6 +23,7 @@ import {
   WANTED_MAX_HEAT,
   WANTED_HEAT_DECAY_PER_TICK,
   WEAPON_SLOTS,
+  VEHICLE_EXPLOSION_HEAT,
 } from './constants.js';
 import { createRng } from './rng.js';
 import { clamp, lerp as lerpVec } from './geometry.js';
@@ -37,6 +38,17 @@ import {
   fireWeapon,
 } from './weapons.js';
 import { createBullet, stepBullet, findBulletTarget, applyBulletDamage } from './bullet.js';
+import {
+  createVehicle,
+  stepVehicle,
+  enterVehicle,
+  exitVehicle,
+  findNearestVehicle,
+  findVehicleById,
+  findExitPosition,
+  runOverDamageTick,
+  explodeVehicle,
+} from './vehicle.js';
 
 /**
  * @typedef {object} GameInput
@@ -51,6 +63,8 @@ import { createBullet, stepBullet, findBulletTarget, applyBulletDamage } from '.
  * @property {boolean} [weapon2]
  * @property {boolean} [weapon3]
  * @property {number} [cycleWeapon] Accumulated wheel steps (negative = up).
+ * @property {boolean} [enter] One-shot intent: enter/exit the nearest vehicle.
+ * @property {boolean} [handbrake] Held while the handbrake key is down.
  * @property {number|null} [pointerX] Canvas-space pointer x, or `null`.
  * @property {number|null} [pointerY] Canvas-space pointer y, or `null`.
  */
@@ -74,6 +88,9 @@ import { createBullet, stepBullet, findBulletTarget, applyBulletDamage } from '.
  * @property {object[]} bullets Live projectiles.
  * @property {number} nextBulletId Monotonic id source for new projectiles.
  * @property {object[]} targets Shootable actors (enemies, props); pure data.
+ * @property {object[]} vehicles Drivable vehicles.
+ * @property {number} nextVehicleId Monotonic id source for new vehicles.
+ * @property {Array<object>|null} vehicleSpecs Explicit spawn overrides.
  * @property {GameEvent[]} events
  * @property {{ x: number, y: number, width: number, height: number }} camera
  * @property {{ x: number, y: number }} cameraDeadZone
@@ -97,6 +114,8 @@ function emptyInput() {
     weapon2: false,
     weapon3: false,
     cycleWeapon: 0,
+    enter: false,
+    handbrake: false,
     pointerX: null,
     pointerY: null,
   };
@@ -211,6 +230,34 @@ function resetCamera(state) {
 }
 
 /**
+ * Fill `state.vehicles` from the explicit spawn overrides or the map's named
+ * vehicle spawn points. Ids are stable across a restart so a saved reference
+ * keeps pointing at the same car.
+ *
+ * @param {GameState} state
+ */
+function resetVehicles(state) {
+  state.vehicles = [];
+  state.nextVehicleId = 0;
+  const mapSpawns = Array.isArray(state.map?.spawns?.vehicleSpawns) ? state.map.spawns.vehicleSpawns : [];
+  const specs = Array.isArray(state.vehicleSpecs) ? state.vehicleSpecs : mapSpawns;
+
+  for (const spec of specs) {
+    if (!spec || !Number.isFinite(spec.x) || !Number.isFinite(spec.y)) continue;
+    const id = spec.id ?? `vehicle-${state.nextVehicleId}`;
+    state.vehicles.push(
+      createVehicle({
+        id,
+        x: spec.x,
+        y: spec.y,
+        angle: Number.isFinite(spec.angle) ? spec.angle : 0,
+      }),
+    );
+    state.nextVehicleId += 1;
+  }
+}
+
+/**
  * Create a new game state.
  *
  * @param {object} options
@@ -220,9 +267,11 @@ function resetCamera(state) {
  * @param {number} [options.seed] Numeric seed used when `rng` is omitted.
  * @param {{ width?: number, height?: number }} [options.viewport] Camera viewport size.
  * @param {{ x?: number, y?: number }} [options.deadZone] Camera dead-zone half extents.
+ * @param {Array<{ id?: number|string, x: number, y: number, angle?: number }>} [options.vehicles]
+ *   Explicit vehicle spawns; when omitted the map's `spawns.vehicleSpawns` are used.
  * @returns {GameState}
  */
-export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
+export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles } = {}) {
   const grid = normalizeGrid(map);
   const resolvedRng = resolveRng(rng, seed);
   let numericSeed = null;
@@ -245,6 +294,9 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
     bullets: [],
     nextBulletId: 0,
     targets: [],
+    vehicles: [],
+    nextVehicleId: 0,
+    vehicleSpecs: Array.isArray(vehicles) ? vehicles : null,
     events: [],
     viewport: normalizeViewport(viewport),
     camera: null,
@@ -258,6 +310,7 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
 
   resetPlayer(state);
   resetCamera(state);
+  resetVehicles(state);
   return state;
 }
 
@@ -297,6 +350,7 @@ export function restart(state) {
   }
   resetPlayer(state);
   resetCamera(state);
+  resetVehicles(state);
   return state;
 }
 
@@ -553,6 +607,7 @@ function updateWeapon(state) {
  */
 function updateBullets(state) {
   const bullets = state.bullets;
+  const shootables = state.targets.concat(state.vehicles);
   let write = 0;
 
   for (let i = 0; i < bullets.length; i += 1) {
@@ -560,7 +615,7 @@ function updateBullets(state) {
     if (!bullet || bullet.alive === false) continue;
 
     const result = stepBullet(state.grid, bullet, TICK_SECONDS);
-    const hit = findBulletTarget(bullet, state.targets);
+    const hit = findBulletTarget(bullet, shootables);
 
     if (hit) {
       const damage = applyBulletDamage(hit.target, bullet.damage);
@@ -577,6 +632,7 @@ function updateBullets(state) {
         x: bullet.x,
         y: bullet.y,
       });
+      if (hit.target.kind === 'vehicle' && damage.killed) detonateVehicle(state, hit.target);
     } else if (result.hitWall) {
       emitEvent(state, 'bullet_wall', {
         bulletId: bullet.id,
@@ -603,6 +659,187 @@ function updateWanted(state) {
 }
 
 /**
+ * Entities a moving vehicle can run over. The generic `targets` list keeps the
+ * feature self-contained; an `enemies` list (enemy system) is included too when
+ * present.
+ *
+ * @param {GameState} state
+ * @returns {object[]}
+ */
+function groundTargets(state) {
+  const list = [];
+  if (Array.isArray(state.targets)) list.push(...state.targets);
+  if (Array.isArray(state.enemies)) list.push(...state.enemies);
+  return list;
+}
+
+/**
+ * The vehicle the player is currently driving, if any. A reference to a dead or
+ * missing vehicle is cleared so the player cannot stay "inside" a wreck.
+ *
+ * @param {GameState} state
+ * @returns {object|null}
+ */
+function drivingVehicle(state) {
+  const id = state.player ? state.player.vehicleId : null;
+  if (id === null || id === undefined) return null;
+  const vehicle = findVehicleById(state.vehicles, id);
+  if (!vehicle || vehicle.alive === false) {
+    if (state.player) state.player.vehicleId = null;
+    return null;
+  }
+  return vehicle;
+}
+
+/**
+ * Enter the closest vehicle in range.
+ *
+ * @param {GameState} state
+ * @returns {object|null} The vehicle entered, or `null`.
+ */
+function enterNearestVehicle(state) {
+  const player = state.player;
+  if (!player) return null;
+  const vehicle = findNearestVehicle(state.vehicles, player.x, player.y);
+  if (!vehicle) {
+    emitEvent(state, 'vehicle_enter_failed', { x: player.x, y: player.y });
+    return null;
+  }
+  enterVehicle(vehicle, player);
+  emitEvent(state, 'vehicle_enter', { vehicleId: vehicle.id, x: vehicle.x, y: vehicle.y });
+  return vehicle;
+}
+
+/**
+ * Leave a vehicle at a safe spot, emitting `vehicle_exit_blocked` when there is
+ * no room and the player has to stay inside.
+ *
+ * @param {GameState} state
+ * @param {object} vehicle
+ * @returns {boolean}
+ */
+function leaveVehicle(state, vehicle) {
+  const position = exitVehicle(vehicle, state.player, state.grid);
+  if (!position) {
+    emitEvent(state, 'vehicle_exit_blocked', { vehicleId: vehicle.id, x: vehicle.x, y: vehicle.y });
+    return false;
+  }
+  emitEvent(state, 'vehicle_exit', { vehicleId: vehicle.id, x: position.x, y: position.y });
+  return true;
+}
+
+/**
+ * Consume the one-shot enter/exit intent: leave the current vehicle if driving,
+ * otherwise get into the nearest one in range.
+ *
+ * @param {GameState} state
+ */
+function handleVehicleIntent(state) {
+  if (!state.input.enter) return;
+  state.input.enter = false;
+  const vehicle = drivingVehicle(state);
+  if (vehicle) leaveVehicle(state, vehicle);
+  else enterNearestVehicle(state);
+}
+
+/**
+ * Destroy a vehicle: explode it, damage every entity in the blast, add wanted
+ * heat and, if the player was driving, eject them to a safe spot when possible.
+ *
+ * @param {GameState} state
+ * @param {object} vehicle
+ */
+function detonateVehicle(state, vehicle) {
+  if (!vehicle || vehicle.exploded) return;
+  const wasDriving = state.player ? state.player.vehicleId === vehicle.id : false;
+  if (wasDriving) state.player.vehicleId = null;
+
+  const victims = [];
+  const push = (entity) => {
+    if (entity && entity !== vehicle && !victims.includes(entity)) victims.push(entity);
+  };
+  push(state.player);
+  for (const list of [state.targets, state.enemies, state.vehicles]) {
+    if (!Array.isArray(list)) continue;
+    for (const entity of list) push(entity);
+  }
+
+  const boom = explodeVehicle(vehicle, victims);
+  addHeat(state, VEHICLE_EXPLOSION_HEAT);
+  emitEvent(state, 'vehicle_explosion', {
+    vehicleId: vehicle.id,
+    x: boom.x,
+    y: boom.y,
+    radius: boom.radius,
+    damage: boom.damage,
+    victims: boom.hits.map((hit) => hit.target.id),
+  });
+
+  // A blast that writes off another vehicle sets it off too, so a pile-up
+  // chain-detonates instead of leaving inert wrecks behind.
+  for (const hit of boom.hits) {
+    const target = hit.target;
+    if (target && target.kind === 'vehicle' && target.alive === false && !target.exploded) {
+      detonateVehicle(state, target);
+    }
+  }
+
+  if (wasDriving && state.player && state.player.alive) {
+    const position = findExitPosition(state.grid, vehicle, state.player.radius);
+    if (position) {
+      state.player.x = position.x;
+      state.player.y = position.y;
+    }
+  }
+}
+
+/**
+ * One tick of driving: integrate the vehicle, resolve run-overs and keep the
+ * player's position locked to the vehicle so the camera follows it.
+ *
+ * @param {GameState} state
+ * @param {object} vehicle
+ */
+function updateDriving(state, vehicle) {
+  const input = state.input;
+  const result = stepVehicle(
+    state.grid,
+    vehicle,
+    {
+      throttle: (input.up ? 1 : 0) - (input.down ? 1 : 0),
+      steer: (input.right ? 1 : 0) - (input.left ? 1 : 0),
+      handbrake: Boolean(input.handbrake),
+    },
+    TICK_SECONDS,
+  );
+
+  for (const hit of runOverDamageTick(vehicle, groundTargets(state))) {
+    emitEvent(state, 'run_over', {
+      vehicleId: vehicle.id,
+      targetId: hit.target.id,
+      amount: hit.dealt,
+      health: hit.health,
+      killed: hit.killed,
+      x: vehicle.x,
+      y: vehicle.y,
+      speed: vehicle.speed,
+    });
+  }
+
+  if (result.crashed) {
+    emitEvent(state, 'vehicle_crash', { vehicleId: vehicle.id, x: vehicle.x, y: vehicle.y, speed: vehicle.speed });
+  }
+
+  if (state.player) {
+    state.player.x = vehicle.x;
+    state.player.y = vehicle.y;
+    state.player.aim = vehicle.angle;
+  }
+
+  if (!vehicle.alive) detonateVehicle(state, vehicle);
+}
+
+/**
  * Advance the simulation by exactly one tick.
  *
  * The tick counter always increments by one, even while paused or after game
@@ -619,10 +856,18 @@ export function update(state) {
   state.tick += 1;
   if (state.gameOver || state.paused) return state;
 
-  tickWeapon(state.player);
-  updateAim(state);
-  updateWeapon(state);
-  movePlayerEntity(state.grid, state.player, state.input, TICK_SECONDS);
+  handleVehicleIntent(state);
+
+  const vehicle = drivingVehicle(state);
+  if (vehicle) {
+    updateDriving(state, vehicle);
+  } else {
+    tickWeapon(state.player);
+    updateAim(state);
+    updateWeapon(state);
+    movePlayerEntity(state.grid, state.player, state.input, TICK_SECONDS);
+  }
+
   updateBullets(state);
   updateCamera(state);
   updateWanted(state);

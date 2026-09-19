@@ -105,17 +105,43 @@ export function formatCash(amount) {
 }
 
 /**
+ * The vehicle the player is currently driving, or `null`.
+ *
+ * @param {object} game Game state (or a partial HUD model).
+ * @returns {object|null}
+ */
+export function drivingVehicle(game) {
+  const id = game?.player?.vehicleId;
+  if (id === null || id === undefined || !Array.isArray(game?.vehicles)) return null;
+  return game.vehicles.find((vehicle) => vehicle && vehicle.id === id) ?? null;
+}
+
+/**
+ * Format a vehicle speed (pixels/second) as an arcade speed reading.
+ *
+ * @param {number} speed Signed speed, in pixels/second.
+ * @param {number} [scale=0.35] Pixels/second to display-unit factor.
+ * @returns {string} e.g. `112 km/h`.
+ */
+export function formatSpeed(speed, scale = 0.35) {
+  const value = Number.isFinite(speed) ? Math.abs(speed) : 0;
+  const factor = Number.isFinite(scale) && scale > 0 ? scale : 0.35;
+  return `${Math.round(value * factor)} km/h`;
+}
+
+/**
  * Compute every HUD rectangle for a physical canvas size. Pure: no drawing.
  *
  * Panel widths scale with the canvas so the left and right columns never
  * overlap on narrow viewports, and the right-hand panels are flagged hidden
  * (`wantedVisible`/`cashVisible`) once there is no room for them next to the
- * left column.
+ * left column. `drivingVisible` is false on very short canvases where the
+ * vehicle speed row would collide with the bottom weapon row.
  *
  * @param {number} width Logical canvas width, in CSS pixels.
  * @param {number} height Logical canvas height, in CSS pixels.
  * @returns {object} Named rectangles `{ x, y, width, height }` plus the
- *   `wantedVisible`/`cashVisible` flags.
+ *   `wantedVisible`/`cashVisible`/`drivingVisible` flags.
  */
 export function computeHudLayout(width, height) {
   const w = Number.isFinite(width) && width > 0 ? width : 960;
@@ -144,11 +170,14 @@ export function computeHudLayout(width, height) {
     health,
     armour,
     ammo,
+    vehicle: { x: pad, y: ammo.y + ammo.height + 10, width: healthWidth, height: 10 },
+    speed: { x: pad, y: ammo.y + ammo.height + 26, width: healthWidth, height: 16 },
     weapon,
     wanted,
     cash,
     wantedVisible: wanted.x >= health.x + health.width + gap,
     cashVisible: cash.x >= weapon.x + weapon.width + gap,
+    drivingVisible: ammo.y + ammo.height + 26 + 16 + gap <= weapon.y,
   };
 }
 
@@ -268,15 +297,24 @@ export function renderHud(ctx, game, size) {
       : HUD_DEFAULTS.reserveAmmo;
   const wanted = Number.isFinite(game.wanted) ? game.wanted : HUD_DEFAULTS.wanted;
   const cash = Number.isFinite(game.cash) ? game.cash : HUD_DEFAULTS.cash;
+  const vehicle = drivingVehicle(game);
 
   ctx.save();
   drawBar(ctx, layout.health, healthRatio, healthColor(healthRatio), `HP ${Math.round(health)}`);
   drawBar(ctx, layout.armour, armourRatio, HUD_COLORS.armour, `AP ${Math.round(armour)}`);
-  drawBar(ctx, layout.ammo, barFillRatio(ammo, magazine), HUD_COLORS.ammo, `${ammo}/${magazine}  (${reserve})`);
 
-  drawLabel(ctx, `${weaponLabel(weapon)}`, layout.weapon.x, layout.weapon.y + layout.weapon.height / 2, {
-    color: HUD_COLORS.muted,
-  });
+  if (vehicle && layout.drivingVisible) {
+    const vehicleRatio = barFillRatio(vehicle.health, vehicle.maxHealth);
+    drawBar(ctx, layout.vehicle, vehicleRatio, healthColor(vehicleRatio), `CAR ${Math.round(vehicle.health)}`);
+    drawLabel(ctx, formatSpeed(vehicle.speed), layout.speed.x, layout.speed.y + layout.speed.height / 2, {
+      color: HUD_COLORS.ink,
+    });
+  } else {
+    drawBar(ctx, layout.ammo, barFillRatio(ammo, magazine), HUD_COLORS.ammo, `${ammo}/${magazine}  (${reserve})`);
+    drawLabel(ctx, `${weaponLabel(weapon)}`, layout.weapon.x, layout.weapon.y + layout.weapon.height / 2, {
+      color: HUD_COLORS.muted,
+    });
+  }
 
   if (layout.cashVisible) {
     drawLabel(ctx, formatCash(cash), layout.cash.x + layout.cash.width, layout.cash.y + layout.cash.height / 2, {
