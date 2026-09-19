@@ -27,14 +27,32 @@ export const MAX_FRAME_SECONDS = 0.25;
 /** Side length of a map tile, in world pixels. */
 export const TILE_SIZE = 32;
 
-/** Tile value meaning "walkable floor". */
+/** Tile value meaning "walkable floor" (kept for backwards compatibility). */
 export const EMPTY_TILE = 0;
 
-/** Tile value meaning "solid wall" (any non-zero value is solid). */
+/** Tile value meaning "solid wall" (kept for backwards compatibility). */
 export const SOLID_TILE = 1;
+
+/**
+ * Tile palette used by the city map.
+ *
+ * `TILE_BUILDING` is the only solid tile; roads, sidewalks and grass are all
+ * walkable. The numeric values deliberately keep `TILE_BUILDING === 1` so maps
+ * authored before the palette existed (0 = empty, 1 = wall) keep working.
+ */
+export const TILE_ROAD = EMPTY_TILE;
+export const TILE_BUILDING = SOLID_TILE;
+export const TILE_SIDEWALK = 2;
+export const TILE_GRASS = 3;
+
+/** Every tile value that blocks movement. @type {ReadonlyArray<number>} */
+export const SOLID_TILES = Object.freeze([TILE_BUILDING]);
 
 /** Player collision radius, in world pixels. */
 export const PLAYER_RADIUS = 12;
+
+/** Vehicle collision radius, in world pixels. */
+export const VEHICLE_RADIUS = 18;
 
 /** Player walk speed, in pixels per second. */
 export const PLAYER_BASE_SPEED = 160;

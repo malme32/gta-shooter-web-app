@@ -15,39 +15,15 @@
  */
 
 import { createGame, advance } from './core/game.js';
-import { TILE_SIZE, EMPTY_TILE } from './core/constants.js';
+import { TILE_SIZE } from './core/constants.js';
+import { createMap, ROAD, SIDEWALK, BUILDING, GRASS } from './core/map.js';
 
-function buildDemoMap() {
-  const width = 30;
-  const height = 17;
-  const tiles = new Array(width * height).fill(EMPTY_TILE);
-  const set = (x, y) => {
-    if (x >= 0 && y >= 0 && x < width && y < height) tiles[y * width + x] = 1;
-  };
-
-  for (let x = 0; x < width; x += 1) {
-    set(x, 0);
-    set(x, height - 1);
-  }
-  for (let y = 0; y < height; y += 1) {
-    set(0, y);
-    set(width - 1, y);
-  }
-  for (const [x, y] of [
-    [5, 5],
-    [6, 5],
-    [10, 8],
-    [11, 8],
-    [14, 4],
-    [20, 10],
-    [22, 6],
-    [24, 11],
-  ]) {
-    set(x, y);
-  }
-
-  return { name: 'demo', width, height, tiles };
-}
+const TILE_COLORS = {
+  [ROAD]: '#111827',
+  [SIDEWALK]: '#334155',
+  [BUILDING]: '#1e293b',
+  [GRASS]: '#14532d',
+};
 
 function bindKeyboard(input) {
   const set = (event, pressed) => {
@@ -89,11 +65,8 @@ function render(ctx, canvas, game) {
   const { grid } = game;
   for (let ty = 0; ty < grid.height; ty += 1) {
     for (let tx = 0; tx < grid.width; tx += 1) {
-      if (grid.tiles[ty * grid.width + tx] === EMPTY_TILE) continue;
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = TILE_COLORS[grid.tiles[ty * grid.width + tx]] ?? '#1e293b';
       ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-      ctx.strokeStyle = '#0f172a';
-      ctx.strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
     }
   }
 
@@ -115,12 +88,13 @@ function bootstrap() {
     return;
   }
 
-  const game = createGame({ map: buildDemoMap(), seed: 1337 });
+  const map = createMap({ seed: 1337 });
+  const game = createGame({ map, spawn: map.spawns.playerStart, seed: 1337 });
   bindKeyboard(game.input);
 
   const status = document.getElementById('status');
   if (status) {
-    status.textContent = 'Fixed-timestep core online — move with WASD or the arrow keys.';
+    status.textContent = 'City online — move with WASD or the arrow keys.';
   }
 
   let last = performance.now();

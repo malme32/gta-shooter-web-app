@@ -13,7 +13,6 @@ import {
   MAX_STEPS_PER_FRAME,
   MAX_FRAME_SECONDS,
   TILE_SIZE,
-  EMPTY_TILE,
   PLAYER_RADIUS,
   PLAYER_BASE_SPEED,
   PLAYER_SPRINT_MULTIPLIER,
@@ -26,7 +25,8 @@ import {
   WANTED_HEAT_DECAY_PER_TICK,
 } from './constants.js';
 import { createRng } from './rng.js';
-import { circleAabbOverlap, clamp } from './geometry.js';
+import { clamp } from './geometry.js';
+import { circleCollides } from './map.js';
 
 /**
  * @typedef {object} GameInput
@@ -280,32 +280,6 @@ export function addHeat(state, amount) {
   return state.heat;
 }
 
-function tileAt(grid, tx, ty) {
-  return grid.tiles[ty * grid.width + tx];
-}
-
-function isSolidAt(grid, tx, ty) {
-  if (tx < 0 || ty < 0 || tx >= grid.width || ty >= grid.height) return true;
-  return tileAt(grid, tx, ty) !== EMPTY_TILE;
-}
-
-function collidesAt(state, x, y, r) {
-  const grid = state.grid;
-  const minTx = Math.floor((x - r) / TILE_SIZE);
-  const maxTx = Math.floor((x + r) / TILE_SIZE);
-  const minTy = Math.floor((y - r) / TILE_SIZE);
-  const maxTy = Math.floor((y + r) / TILE_SIZE);
-
-  for (let ty = minTy; ty <= maxTy; ty += 1) {
-    for (let tx = minTx; tx <= maxTx; tx += 1) {
-      if (!isSolidAt(grid, tx, ty)) continue;
-      const box = { x: tx * TILE_SIZE, y: ty * TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE };
-      if (circleAabbOverlap({ x, y, r }, box)) return true;
-    }
-  }
-  return false;
-}
-
 function movePlayer(state) {
   const p = state.player;
   const i = state.input;
@@ -319,8 +293,8 @@ function movePlayer(state) {
   const nx = p.x + dx * inv * step;
   const ny = p.y + dy * inv * step;
 
-  if (!collidesAt(state, nx, p.y, p.radius)) p.x = nx;
-  if (!collidesAt(state, p.x, ny, p.radius)) p.y = ny;
+  if (!circleCollides(state.grid, nx, p.y, p.radius)) p.x = nx;
+  if (!circleCollides(state.grid, p.x, ny, p.radius)) p.y = ny;
 }
 
 function tickCooldowns(state) {
