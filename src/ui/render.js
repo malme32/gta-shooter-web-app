@@ -20,6 +20,7 @@
  */
 
 import { TILE_SIZE, TICK_SECONDS } from '../core/constants.js';
+import { advance } from '../core/game.js';
 import { clamp, lerp as lerpVec } from '../core/geometry.js';
 import { ROAD, SIDEWALK, BUILDING, GRASS } from '../core/map.js';
 
@@ -198,6 +199,11 @@ function collectEntities(game) {
  * the next frame. Keeping the snapshot separate means the core game state is
  * never mutated by the renderer.
  *
+ * Every entity (and projectile) **must carry a stable, unique `id`** so that
+ * {@link interpolateScene} can match the same actor across snapshots, plus a
+ * `kind` so {@link spriteFor} can choose its procedural sprite. Entities
+ * without an `id` collapse onto a single `Map` key and jitter.
+ *
  * @param {object} game
  * @returns {{ player: object|null, camera: object|null, entities: object[] }}
  */
@@ -209,7 +215,6 @@ export function snapshotScene(game) {
         aim: game.player.aim,
         radius: game.player.radius,
         alive: game.player.alive,
-        weapon: game.player.weapon,
       }
     : null;
 
@@ -230,8 +235,9 @@ export function snapshotScene(game) {
 /**
  * Interpolate a full scene between two snapshots.
  *
- * Entities are matched by `id` so ones that appear or disappear between ticks
- * do not corrupt the interpolation of the others.
+ * Entities are matched by their **stable, unique `id`** so ones that appear or
+ * disappear between ticks do not corrupt the interpolation of the others; their
+ * `kind` is kept from the current sample so {@link spriteFor} stays correct.
  *
  * @param {{ player: object|null, camera: object|null, entities: object[] }|null} prev
  * @param {{ player: object|null, camera: object|null, entities: object[] }} curr
@@ -250,6 +256,38 @@ export function interpolateScene(prev, curr, t) {
       const point = interpolatePoint(prevEntities.get(entity.id), entity, t);
       return { ...entity, x: point.x, y: point.y };
     }),
+  };
+}
+
+/**
+ * Advance the fixed-timestep simulation by `dtSeconds` and produce the
+ * interpolated scene to draw for this frame.
+ *
+ * The state is snapshotted **before** `advance()` runs so that `prevSnapshot`
+ * always holds the previous *tick*, not the current one. Frames that consume no
+ * whole tick (`steps === 0`) keep that previous snapshot and blend it towards
+ * the unchanged current state using the growing accumulator, which is what
+ * produces sub-tick motion on 120/144 Hz displays. Snapshotting after
+ * `advance()` would make `prev` and `curr` identical on those frames and leave
+ * high-refresh rendering stepped at 60 Hz.
+ *
+ * @param {object} game Game state mutated in place by `advance()`.
+ * @param {number} dtSeconds Seconds elapsed since the previous frame.
+ * @param {{ player: object|null, camera: object|null, entities: object[] }|null} prevSnapshot
+ *   Snapshot returned by the previous call (or `snapshotScene(game)` initially).
+ * @returns {{ steps: number, alpha: number, prevSnapshot: object, scene: object }}
+ *   `prevSnapshot` must be fed back into the next call to keep motion smooth.
+ */
+export function sampleFrame(game, dtSeconds, prevSnapshot) {
+  const before = snapshotScene(game);
+  const steps = advance(game, dtSeconds);
+  const base = steps > 0 ? before : prevSnapshot;
+  const alpha = alphaFor(game.accumulator, TICK_SECONDS);
+  return {
+    steps,
+    alpha,
+    prevSnapshot: base,
+    scene: interpolateScene(base, snapshotScene(game), alpha),
   };
 }
 

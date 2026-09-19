@@ -11,6 +11,7 @@ import {
   visibleTileBounds,
   snapshotScene,
   interpolateScene,
+  sampleFrame,
   spriteFor,
   TILE_COLORS,
   PLAYER_SPRITE,
@@ -119,7 +120,7 @@ test('snapshotScene captures player, camera and entities without mutation', () =
     bullets: [{ id: 'b1', kind: 'bullet', x: 7, y: 8 }],
   };
   const scene = snapshotScene(game);
-  assert.deepEqual(scene.player, { x: 1, y: 2, aim: 0.5, radius: 12, alive: true, weapon: 'pistol' });
+  assert.deepEqual(scene.player, { x: 1, y: 2, aim: 0.5, radius: 12, alive: true });
   scene.camera.x = 999;
   assert.equal(game.camera.x, 10, 'snapshot must not alias the live camera');
   assert.equal(scene.entities.length, 2);
@@ -181,6 +182,64 @@ test('a fresh game snapshot interpolates into a valid scene', () => {
   assert.equal(scene.player.x, game.player.x);
 });
 
+/** A wall-free map so the player can move without colliding. */
+function openGame() {
+  const width = 40;
+  const height = 40;
+  const map = { width, height, tiles: new Array(width * height).fill(0) };
+  const game = createGame({
+    map,
+    spawn: { x: (width * TILE_SIZE) / 2, y: (height * TILE_SIZE) / 2 },
+    seed: 1,
+  });
+  game.input.right = true;
+  return game;
+}
+
+/**
+ * Drive the real frame loop (advance + snapshot + interpolate) at a given
+ * refresh rate and record the rendered player X for every frame.
+ */
+function driveFrames(game, frameHz, frames) {
+  const dt = 1 / frameHz;
+  let prev = snapshotScene(game);
+  const positions = [];
+  let steps = 0;
+  for (let i = 0; i < frames; i += 1) {
+    const sample = sampleFrame(game, dt, prev);
+    prev = sample.prevSnapshot;
+    steps += sample.steps;
+    positions.push(sample.scene.player.x);
+  }
+  return { positions, steps, distinct: new Set(positions.map((x) => x.toFixed(6))).size };
+}
+
+for (const frameHz of [120, 144]) {
+  test(`sampleFrame interpolates between ticks at ${frameHz} Hz`, () => {
+    const game = openGame();
+    const frames = 24;
+    const { steps, distinct } = driveFrames(game, frameHz, frames);
+    assert.ok(steps > 0, 'the simulation should tick during the sample window');
+    assert.ok(
+      distinct > steps,
+      `expected more distinct rendered positions (${distinct}) than simulation ticks (${steps})`,
+    );
+    assert.ok(
+      distinct >= frames - 2,
+      `expected near-per-frame motion, got ${distinct}/${frames} distinct positions`,
+    );
+  });
+}
+
+test('sampleFrame keeps the previous snapshot when no tick runs', () => {
+  const game = openGame();
+  const prev = snapshotScene(game);
+  const sample = sampleFrame(game, TICK_SECONDS / 4, prev);
+  assert.equal(sample.steps, 0);
+  assert.equal(sample.prevSnapshot, prev, 'a sub-tick frame must not advance the base snapshot');
+  assert.ok(sample.alpha > 0 && sample.alpha < 1);
+});
+
 test('barFillRatio clamps and guards against a zero max', () => {
   assert.equal(barFillRatio(50, 100), 0.5);
   assert.equal(barFillRatio(200, 100), 1);
@@ -231,4 +290,28 @@ test('computeHudLayout falls back to a sane size for bad input', () => {
   const layout = computeHudLayout(0, undefined);
   assert.equal(layout.width, 960);
   assert.equal(layout.height, 540);
+});
+
+test('computeHudLayout keeps the left and right panels apart when narrow', () => {
+  for (const width of [320, 360, 400, 640, 960]) {
+    const layout = computeHudLayout(width, 540);
+    if (layout.wantedVisible) {
+      assert.ok(
+        layout.wanted.x >= layout.health.x + layout.health.width,
+        `health/wanted overlap at width ${width}`,
+      );
+    }
+    if (layout.cashVisible) {
+      assert.ok(
+        layout.cash.x >= layout.weapon.x + layout.weapon.width,
+        `weapon/cash overlap at width ${width}`,
+      );
+    }
+  }
+});
+
+test('computeHudLayout hides right-hand panels when there is no room', () => {
+  const layout = computeHudLayout(150, 540);
+  assert.equal(layout.wantedVisible, false);
+  assert.equal(layout.cashVisible, false);
 });

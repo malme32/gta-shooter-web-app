@@ -20,24 +20,36 @@
  * only exercise `src/core/`.
  */
 
-import { createGame, advance } from './core/game.js';
-import { TICK_SECONDS } from './core/constants.js';
+import { createGame } from './core/game.js';
 import { createMap } from './core/map.js';
 import { createInput } from './ui/input.js';
 import {
-  alphaFor,
   clearCanvas,
-  interpolateScene,
   renderWorld,
+  sampleFrame,
   snapshotScene,
 } from './ui/render.js';
-import { HUD_DEFAULTS, renderHud } from './ui/hud.js';
+import { renderHud, weaponLabel } from './ui/hud.js';
+
+/**
+ * Last CSS size seen from `getBoundingClientRect()`.
+ *
+ * The canvas backing store is DPR-scaled, so `canvas.width`/`canvas.height`
+ * are physical pixels and must never be used as a CSS fallback: doing so would
+ * compound the backing size every frame whenever the element is temporarily
+ * detached (rect reports zero). Remembering the last good CSS size avoids that.
+ */
+let lastCssSize = { width: 0, height: 0 };
 
 function cssSize(canvas) {
   const rect = typeof canvas.getBoundingClientRect === 'function' ? canvas.getBoundingClientRect() : null;
-  const width = rect && rect.width > 0 ? rect.width : canvas.width;
-  const height = rect && rect.height > 0 ? rect.height : canvas.height;
-  return { width, height };
+  if (rect && rect.width > 0 && rect.height > 0) {
+    lastCssSize = { width: rect.width, height: rect.height };
+  }
+  return {
+    width: lastCssSize.width > 0 ? lastCssSize.width : 960,
+    height: lastCssSize.height > 0 ? lastCssSize.height : 540,
+  };
 }
 
 /**
@@ -102,24 +114,24 @@ function bootstrap() {
   let frameCount = 0;
 
   function frame(now) {
-    const steps = advance(game, (now - last) / 1000);
+    const dt = (now - last) / 1000;
     last = now;
     frameCount += 1;
 
     dpr = syncCanvasSize(canvas, ctx, game);
+    const sample = sampleFrame(game, dt, prevSnapshot);
+    prevSnapshot = sample.prevSnapshot;
+
     const { width, height } = game.viewport;
-    const alpha = alphaFor(game.accumulator, TICK_SECONDS);
-    const scene = interpolateScene(prevSnapshot, snapshotScene(game), alpha);
+    const scene = sample.scene;
 
     clearCanvas(ctx, { width, height, dpr });
     renderWorld(ctx, { grid: game.grid, camera: scene.camera, player: scene.player, entities: scene.entities });
     renderHud(ctx, game, { width, height });
 
-    if (steps > 0) prevSnapshot = snapshotScene(game);
-
     if (status && frameCount % 30 === 0) {
       const p = game.player;
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${HUD_DEFAULTS.weapon}`;
+      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted} · ${weaponLabel(p.weapon)}`;
     }
 
     requestAnimationFrame(frame);
