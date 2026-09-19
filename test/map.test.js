@@ -52,7 +52,8 @@ test('createMap builds a 100x100 grid by default', () => {
 test('createMap validates its options', () => {
   assert.throws(() => createMap({ width: 0 }), /map\.width/);
   assert.throws(() => createMap({ height: -3 }), /map\.height/);
-  assert.throws(() => createMap({ blockSize: 2 }), /blockSize must be at least 3/);
+  assert.throws(() => createMap({ blockSize: 2 }), /blockSize must be at least 4/);
+  assert.throws(() => createMap({ blockSize: 3 }), /blockSize must be at least 4/);
   assert.throws(() => createMap({ width: 10, height: 10, blockSize: 10 }), /blockSize must be smaller/);
 });
 
@@ -79,6 +80,20 @@ test('generated map uses all four tile types', () => {
   assert.ok(used.has(SIDEWALK), 'expected sidewalks');
   assert.ok(used.has(BUILDING), 'expected buildings');
   assert.ok(used.has(GRASS), 'expected grass parks');
+});
+
+test('every accepted blockSize produces all four tile types', () => {
+  for (const blockSize of [4, 5, 6, 7, 8, 10, 12, 15]) {
+    const map = createMap({ width: 30, height: 30, blockSize, seed: 1 });
+    const used = new Set(map.tiles);
+    for (const tile of [ROAD, SIDEWALK, BUILDING, GRASS]) {
+      assert.ok(used.has(tile), `blockSize ${blockSize} is missing tile ${tile}`);
+    }
+    assert.ok(
+      map.spawns.vehicleSpawns.length > 0,
+      `blockSize ${blockSize} has no vehicle spawns`,
+    );
+  }
 });
 
 test('only buildings are solid; roads, sidewalks and grass are walkable', () => {
@@ -295,6 +310,20 @@ test('vehicle spawns sit on road tiles', () => {
     const tx = Math.floor(point.x / TILE_SIZE);
     const ty = Math.floor(point.y / TILE_SIZE);
     assert.equal(tileAt(map, tx, ty), ROAD);
+  }
+});
+
+test('vehicle spawns have clearance for a vehicle-sized circle', () => {
+  for (const seed of [1, 2, 1337]) {
+    const map = createMap({ seed });
+    assert.ok(map.spawns.vehicleSpawns.length > 0, `seed ${seed} has no vehicle spawns`);
+    for (const point of map.spawns.vehicleSpawns) {
+      assert.equal(
+        canStandAt(map, point.x, point.y, VEHICLE_RADIUS),
+        true,
+        `seed ${seed} vehicle spawn ${JSON.stringify(point)} overlaps a solid tile`,
+      );
+    }
   }
 });
 
