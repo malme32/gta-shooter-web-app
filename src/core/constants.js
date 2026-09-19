@@ -66,6 +66,37 @@ export const PLAYER_MAX_HEALTH = 100;
 /** Player health on spawn. */
 export const PLAYER_STARTING_HEALTH = 100;
 
+/** Player armour ceiling. Damage is absorbed by armour before health. */
+export const PLAYER_MAX_ARMOUR = 100;
+
+/** Player armour on spawn. */
+export const PLAYER_STARTING_ARMOUR = 0;
+
+/** Default camera viewport width, in pixels (matches the canvas element). */
+export const CAMERA_VIEW_WIDTH = 960;
+
+/** Default camera viewport height, in pixels (matches the canvas element). */
+export const CAMERA_VIEW_HEIGHT = 540;
+
+/**
+ * Half-width of the camera dead-zone. While the player stays within this many
+ * pixels of the camera centre the camera does not move.
+ */
+export const CAMERA_DEADZONE_X = 72;
+
+/** Half-height of the camera dead-zone, in pixels. */
+export const CAMERA_DEADZONE_Y = 48;
+
+/**
+ * Fraction of the remaining distance the camera closes each tick. A value in
+ * `[0,1]`; `1` snaps instantly. Applied per simulation tick so the follow
+ * behaviour is independent of the render rate.
+ */
+export const CAMERA_LERP_PER_TICK = 0.18;
+
+/** Distance (pixels) below which the camera is considered settled. */
+export const CAMERA_SETTLE_EPSILON = 0.01;
+
 /** Bullet collision radius, in world pixels. */
 export const BULLET_RADIUS = 3;
 

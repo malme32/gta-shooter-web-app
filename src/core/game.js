@@ -13,20 +13,20 @@ import {
   MAX_STEPS_PER_FRAME,
   MAX_FRAME_SECONDS,
   TILE_SIZE,
-  PLAYER_RADIUS,
-  PLAYER_BASE_SPEED,
-  PLAYER_SPRINT_MULTIPLIER,
-  PLAYER_MAX_HEALTH,
-  PLAYER_STARTING_HEALTH,
-  DEFAULT_WEAPON,
-  WEAPONS,
+  CAMERA_VIEW_WIDTH,
+  CAMERA_VIEW_HEIGHT,
+  CAMERA_DEADZONE_X,
+  CAMERA_DEADZONE_Y,
+  CAMERA_LERP_PER_TICK,
+  CAMERA_SETTLE_EPSILON,
   WANTED_THRESHOLDS,
   WANTED_MAX_HEAT,
   WANTED_HEAT_DECAY_PER_TICK,
 } from './constants.js';
 import { createRng } from './rng.js';
-import { circleAabbOverlap, clamp } from './geometry.js';
-import { isSolidTile } from './map.js';
+import { clamp, lerp as lerpVec } from './geometry.js';
+import { clampCamera, cameraFollowTarget } from './map.js';
+import { createPlayer, movePlayer as movePlayerEntity, aimAt } from './player.js';
 
 /**
  * @typedef {object} GameInput
@@ -35,6 +35,10 @@ import { isSolidTile } from './map.js';
  * @property {boolean} left
  * @property {boolean} right
  * @property {boolean} sprint
+ * @property {boolean} [fire]
+ * @property {boolean} [reload]
+ * @property {number|null} [pointerX] Canvas-space pointer x, or `null`.
+ * @property {number|null} [pointerY] Canvas-space pointer y, or `null`.
  */
 
 /**
@@ -55,6 +59,9 @@ import { isSolidTile } from './map.js';
  * @property {object} player
  * @property {object[]} bullets
  * @property {GameEvent[]} events
+ * @property {{ x: number, y: number, width: number, height: number }} camera
+ * @property {{ x: number, y: number }} cameraDeadZone
+ * @property {{ width: number, height: number }} viewport
  * @property {number} heat
  * @property {number} wanted
  * @property {boolean} gameOver
@@ -62,7 +69,42 @@ import { isSolidTile } from './map.js';
  */
 
 function emptyInput() {
-  return { up: false, down: false, left: false, right: false, sprint: false };
+  return {
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    sprint: false,
+    fire: false,
+    reload: false,
+    pointerX: null,
+    pointerY: null,
+  };
+}
+
+/**
+ * Normalise a viewport option, falling back to the default canvas size.
+ *
+ * @param {{ width?: number, height?: number }} [viewport]
+ * @returns {{ width: number, height: number }}
+ */
+function normalizeViewport(viewport) {
+  return {
+    width: Number.isFinite(viewport?.width) && viewport.width > 0 ? viewport.width : CAMERA_VIEW_WIDTH,
+    height: Number.isFinite(viewport?.height) && viewport.height > 0 ? viewport.height : CAMERA_VIEW_HEIGHT,
+  };
+}
+
+/**
+ * Normalise a camera dead-zone option.
+ *
+ * @param {{ x?: number, y?: number }} [deadZone]
+ * @returns {{ x: number, y: number }}
+ */
+function normalizeDeadZone(deadZone) {
+  const x = Number.isFinite(deadZone?.x) && deadZone.x >= 0 ? deadZone.x : CAMERA_DEADZONE_X;
+  const y = Number.isFinite(deadZone?.y) && deadZone.y >= 0 ? deadZone.y : CAMERA_DEADZONE_Y;
+  return { x, y };
 }
 
 /**
@@ -123,21 +165,24 @@ function defaultSpawn(grid) {
 }
 
 function resetPlayer(state) {
-  const weapon = WEAPONS[DEFAULT_WEAPON];
-  state.player = {
-    id: 0,
-    x: state.spawn.x,
-    y: state.spawn.y,
-    radius: PLAYER_RADIUS,
-    speed: PLAYER_BASE_SPEED,
-    health: PLAYER_STARTING_HEALTH,
-    maxHealth: PLAYER_MAX_HEALTH,
-    aim: 0,
-    cooldown: 0,
-    reloadTicks: 0,
-    weapon: DEFAULT_WEAPON,
-    ammo: weapon.magazineSize,
-  };
+  state.player = createPlayer({ id: 0, x: state.spawn.x, y: state.spawn.y });
+}
+
+/**
+ * Re-centre the camera on the player, clamped to the map.
+ *
+ * @param {GameState} state
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+function resetCamera(state) {
+  state.camera = cameraFollowTarget(
+    state.grid,
+    state.spawn.x,
+    state.spawn.y,
+    state.viewport.width,
+    state.viewport.height,
+  );
+  return state.camera;
 }
 
 /**
@@ -148,9 +193,11 @@ function resetPlayer(state) {
  * @param {Vec} [options.spawn] Optional spawn point, in world pixels.
  * @param {() => number | number} [options.rng] Random function or numeric seed.
  * @param {number} [options.seed] Numeric seed used when `rng` is omitted.
+ * @param {{ width?: number, height?: number }} [options.viewport] Camera viewport size.
+ * @param {{ x?: number, y?: number }} [options.deadZone] Camera dead-zone half extents.
  * @returns {GameState}
  */
-export function createGame({ map, spawn, rng, seed } = {}) {
+export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
   const grid = normalizeGrid(map);
   const resolvedRng = resolveRng(rng, seed);
   const numericSeed = typeof seed === 'number' ? seed : typeof rng === 'number' ? rng : null;
@@ -168,6 +215,9 @@ export function createGame({ map, spawn, rng, seed } = {}) {
     player: null,
     bullets: [],
     events: [],
+    viewport: normalizeViewport(viewport),
+    camera: null,
+    cameraDeadZone: normalizeDeadZone(deadZone),
     heat: 0,
     wanted: 0,
     gameOver: false,
@@ -176,6 +226,7 @@ export function createGame({ map, spawn, rng, seed } = {}) {
   };
 
   resetPlayer(state);
+  resetCamera(state);
   return state;
 }
 
@@ -199,11 +250,12 @@ export function restart(state) {
   state.wanted = 0;
   state.gameOver = false;
   state.paused = false;
-  state.input = emptyInput();
+  Object.assign(state.input, emptyInput());
   if (state.seed !== null) {
     state.rng = createRng(state.seed);
   }
   resetPlayer(state);
+  resetCamera(state);
   return state;
 }
 
@@ -263,47 +315,85 @@ export function addHeat(state, amount) {
   return state.heat;
 }
 
-function tileAt(grid, tx, ty) {
-  return grid.tiles[ty * grid.width + tx];
+/**
+ * Where should the camera move to so `focus` stays inside the dead-zone?
+ * Returns the current camera top-left when the focus is already inside the
+ * zone, so small movements do not cause a jitter.
+ *
+ * @param {{ x: number, y: number, width: number, height: number }} camera
+ * @param {{ x: number, y: number }} deadZone Half extents, in pixels.
+ * @param {{ x: number, y: number }} focus World-space point being followed.
+ * @returns {{ x: number, y: number }}
+ */
+export function cameraTarget(camera, deadZone, focus) {
+  const dx = focus.x - (camera.x + camera.width / 2);
+  const dy = focus.y - (camera.y + camera.height / 2);
+  let x = camera.x;
+  let y = camera.y;
+  if (dx > deadZone.x) x = camera.x + (dx - deadZone.x);
+  else if (dx < -deadZone.x) x = camera.x + (dx + deadZone.x);
+  if (dy > deadZone.y) y = camera.y + (dy - deadZone.y);
+  else if (dy < -deadZone.y) y = camera.y + (dy + deadZone.y);
+  return { x, y };
 }
 
-function isSolidAt(grid, tx, ty) {
-  if (tx < 0 || ty < 0 || tx >= grid.width || ty >= grid.height) return true;
-  return isSolidTile(tileAt(grid, tx, ty));
+/**
+ * Advance the camera one tick: apply the dead-zone, interpolate towards the
+ * target and clamp the result to the map.
+ *
+ * @param {GameState} state
+ * @param {number} [factor=CAMERA_LERP_PER_TICK] Interpolation factor in `[0,1]`.
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+export function updateCamera(state, factor = CAMERA_LERP_PER_TICK) {
+  const camera = state.camera;
+  const t = Number.isFinite(factor) ? clamp(factor, 0, 1) : CAMERA_LERP_PER_TICK;
+  const target = cameraTarget(camera, state.cameraDeadZone, state.player);
+  const moved = lerpVec(camera, target, t);
+
+  if (Math.abs(target.x - moved.x) < CAMERA_SETTLE_EPSILON) moved.x = target.x;
+  if (Math.abs(target.y - moved.y) < CAMERA_SETTLE_EPSILON) moved.y = target.y;
+
+  state.camera = clampCamera(state.grid, { x: moved.x, y: moved.y, width: camera.width, height: camera.height });
+  return state.camera;
 }
 
-function collidesAt(state, x, y, r) {
-  const grid = state.grid;
-  const minTx = Math.floor((x - r) / TILE_SIZE);
-  const maxTx = Math.floor((x + r) / TILE_SIZE);
-  const minTy = Math.floor((y - r) / TILE_SIZE);
-  const maxTy = Math.floor((y + r) / TILE_SIZE);
-
-  for (let ty = minTy; ty <= maxTy; ty += 1) {
-    for (let tx = minTx; tx <= maxTx; tx += 1) {
-      if (!isSolidAt(grid, tx, ty)) continue;
-      const box = { x: tx * TILE_SIZE, y: ty * TILE_SIZE, w: TILE_SIZE, h: TILE_SIZE };
-      if (circleAabbOverlap({ x, y, r }, box)) return true;
-    }
-  }
-  return false;
+/**
+ * Snap the camera straight to the dead-zone target, skipping interpolation.
+ *
+ * @param {GameState} state
+ * @returns {{ x: number, y: number, width: number, height: number }}
+ */
+export function snapCamera(state) {
+  const { camera, cameraDeadZone } = state;
+  const target = cameraTarget(camera, cameraDeadZone, state.player);
+  state.camera = clampCamera(state.grid, { x: target.x, y: target.y, width: camera.width, height: camera.height });
+  return state.camera;
 }
 
-function movePlayer(state) {
-  const p = state.player;
-  const i = state.input;
-  const dx = (i.right ? 1 : 0) - (i.left ? 1 : 0);
-  const dy = (i.down ? 1 : 0) - (i.up ? 1 : 0);
-  if (dx === 0 && dy === 0) return;
+/**
+ * Convert a canvas-space point to world space for the given camera.
+ *
+ * @param {{ x: number, y: number }} camera
+ * @param {number} screenX
+ * @param {number} screenY
+ * @returns {{ x: number, y: number }}
+ */
+export function screenToWorld(camera, screenX, screenY) {
+  return { x: camera.x + screenX, y: camera.y + screenY };
+}
 
-  const inv = 1 / Math.hypot(dx, dy);
-  const speed = p.speed * (i.sprint ? PLAYER_SPRINT_MULTIPLIER : 1);
-  const step = speed * TICK_SECONDS;
-  const nx = p.x + dx * inv * step;
-  const ny = p.y + dy * inv * step;
-
-  if (!collidesAt(state, nx, p.y, p.radius)) p.x = nx;
-  if (!collidesAt(state, p.x, ny, p.radius)) p.y = ny;
+/**
+ * Point the player at the mouse when the intent carries a pointer position.
+ *
+ * @param {GameState} state
+ * @returns {number} The aim angle, or the player's existing aim when no pointer.
+ */
+function updateAim(state) {
+  const { pointerX, pointerY } = state.input;
+  if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return state.player.aim;
+  const world = screenToWorld(state.camera, pointerX, pointerY);
+  return aimAt(state.player, world.x, world.y);
 }
 
 function tickCooldowns(state) {
@@ -337,7 +427,9 @@ export function update(state) {
   if (state.gameOver || state.paused) return state;
 
   tickCooldowns(state);
-  movePlayer(state);
+  updateAim(state);
+  movePlayerEntity(state.grid, state.player, state.input, TICK_SECONDS);
+  updateCamera(state);
   updateWanted(state);
   return state;
 }
