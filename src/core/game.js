@@ -13,7 +13,6 @@ import {
   MAX_STEPS_PER_FRAME,
   MAX_FRAME_SECONDS,
   TILE_SIZE,
-  EMPTY_TILE,
   PLAYER_RADIUS,
   PLAYER_BASE_SPEED,
   PLAYER_SPRINT_MULTIPLIER,
@@ -27,6 +26,7 @@ import {
 } from './constants.js';
 import { createRng } from './rng.js';
 import { circleAabbOverlap, clamp } from './geometry.js';
+import { isSolidTile } from './map.js';
 
 /**
  * @typedef {object} GameInput
@@ -269,7 +269,7 @@ function tileAt(grid, tx, ty) {
 
 function isSolidAt(grid, tx, ty) {
   if (tx < 0 || ty < 0 || tx >= grid.width || ty >= grid.height) return true;
-  return tileAt(grid, tx, ty) !== EMPTY_TILE;
+  return isSolidTile(tileAt(grid, tx, ty));
 }
 
 function collidesAt(state, x, y, r) {
