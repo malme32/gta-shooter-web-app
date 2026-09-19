@@ -1,0 +1,2 @@
+# Pure game logic lives here. Browser APIs are forbidden in this directory so
+# the code stays unit-testable under Node. Populated from T2 onwards.

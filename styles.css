@@ -1,0 +1,68 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b0e14;
+  --panel: #151a23;
+  --ink: #e6edf3;
+  --muted: #8b98a9;
+  --accent: #7dd3fc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 1.5rem;
+}
+
+.game {
+  width: min(100%, 960px);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.game__hud {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--panel);
+  border-radius: 0.5rem;
+}
+
+.game__title {
+  margin: 0;
+  font-size: 1.25rem;
+  letter-spacing: 0.02em;
+}
+
+.game__status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.game__canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #05070b;
+  border: 1px solid #232b38;
+  border-radius: 0.5rem;
+  touch-action: none;
+}
