@@ -26,9 +26,16 @@ import {
   VEHICLE_EXPLOSION_HEAT,
 } from './constants.js';
 import { createRng } from './rng.js';
-import { clamp, lerp as lerpVec } from './geometry.js';
+import { clamp, circlesOverlap, lerp as lerpVec } from './geometry.js';
 import { clampCamera, cameraFollowTarget } from './map.js';
-import { createPlayer, movePlayer as movePlayerEntity, aimAt } from './player.js';
+import {
+  createPlayer,
+  movePlayer as movePlayerEntity,
+  aimAt,
+  isAlive as isPlayerAlive,
+  healPlayer,
+  addArmour,
+} from './player.js';
 import {
   weaponSpec,
   switchToSlot,
@@ -49,6 +56,8 @@ import {
   runOverDamageTick,
   explodeVehicle,
 } from './vehicle.js';
+import { ENEMY_TYPE_IDS, createEnemy, isEnemyAlive, enemySpec, rollLoot, createPickup } from './enemy.js';
+import { aiTick } from './ai.js';
 
 /**
  * @typedef {object} GameInput
@@ -88,6 +97,11 @@ import {
  * @property {object[]} bullets Live projectiles.
  * @property {number} nextBulletId Monotonic id source for new projectiles.
  * @property {object[]} targets Shootable actors (enemies, props); pure data.
+ * @property {object[]} enemies Live enemy actors driven by `core/ai.js`.
+ * @property {number} nextEnemyId Monotonic id source for new enemies.
+ * @property {object[]} pickups Loot dropped by dead enemies.
+ * @property {number} nextPickupId Monotonic id source for new pickups.
+ * @property {number} cash Money collected from loot.
  * @property {object[]} vehicles Drivable vehicles.
  * @property {number} nextVehicleId Monotonic id source for new vehicles.
  * @property {Array<object>|null} vehicleSpecs Explicit spawn overrides.
@@ -208,6 +222,41 @@ function defaultSpawn(grid) {
   };
 }
 
+/**
+ * Collect enemy spawn points from a map. Supports both the generated map's
+ * `spawns.enemySpawns` and a top-level `enemySpawns` array, so hand-authored
+ * maps can place enemies without the full spawn structure.
+ *
+ * @param {object} map
+ * @returns {Array<{ x: number, y: number }>}
+ */
+function enemySpawnPoints(map) {
+  if (Array.isArray(map?.enemySpawns)) return map.enemySpawns;
+  if (Array.isArray(map?.spawns?.enemySpawns)) return map.spawns.enemySpawns;
+  return [];
+}
+
+/**
+ * (Re)create the enemy squad from the map's spawn points, cycling through the
+ * archetype list so spawns are deterministic. Ids are stable across a restart.
+ *
+ * @param {GameState} state
+ * @returns {object[]} The freshly spawned enemies.
+ */
+function spawnEnemies(state) {
+  const points = enemySpawnPoints(state.map);
+  state.enemies = points.map((point, index) =>
+    createEnemy({
+      id: index + 1,
+      type: ENEMY_TYPE_IDS[index % ENEMY_TYPE_IDS.length],
+      x: point.x,
+      y: point.y,
+    }),
+  );
+  state.nextEnemyId = points.length + 1;
+  return state.enemies;
+}
+
 function resetPlayer(state) {
   state.player = createPlayer({ id: 0, x: state.spawn.x, y: state.spawn.y });
 }
@@ -294,6 +343,11 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles
     bullets: [],
     nextBulletId: 0,
     targets: [],
+    enemies: [],
+    nextEnemyId: 1,
+    pickups: [],
+    nextPickupId: 1,
+    cash: 0,
     vehicles: [],
     nextVehicleId: 0,
     vehicleSpecs: Array.isArray(vehicles) ? vehicles : null,
@@ -311,6 +365,7 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles
   resetPlayer(state);
   resetCamera(state);
   resetVehicles(state);
+  spawnEnemies(state);
   return state;
 }
 
@@ -335,6 +390,9 @@ export function restart(state) {
   state.bullets.length = 0;
   state.nextBulletId = 0;
   state.targets.length = 0;
+  if (Array.isArray(state.pickups)) state.pickups.length = 0;
+  state.nextPickupId = 1;
+  state.cash = 0;
   state.events = [];
   state.heat = 0;
   state.wanted = 0;
@@ -351,6 +409,7 @@ export function restart(state) {
   resetPlayer(state);
   resetCamera(state);
   resetVehicles(state);
+  spawnEnemies(state);
   return state;
 }
 
@@ -607,7 +666,11 @@ function updateWeapon(state) {
  */
 function updateBullets(state) {
   const bullets = state.bullets;
-  const shootables = state.targets.concat(state.vehicles);
+  const shootables = state.targets.concat(
+    state.vehicles,
+    Array.isArray(state.enemies) ? state.enemies : [],
+    state.player ? [state.player] : [],
+  );
   let write = 0;
 
   for (let i = 0; i < bullets.length; i += 1) {
@@ -649,6 +712,175 @@ function updateBullets(state) {
   }
 
   bullets.length = write;
+}
+
+/**
+ * Run one tick of AI for every live enemy and spawn any bullets they fire.
+ * Emits `enemy_alert` when an enemy newly acquires the player and
+ * `enemy_lost_player` when it forgets them.
+ *
+ * @param {GameState} state
+ */
+function updateEnemies(state) {
+  if (!Array.isArray(state.enemies)) return;
+  for (const enemy of state.enemies) {
+    if (!isEnemyAlive(enemy)) continue;
+    const result = aiTick(state.grid, enemy, {
+      player: state.player,
+      rng: state.rng,
+      dtSeconds: TICK_SECONDS,
+    });
+
+    if (result.alerted) {
+      emitEvent(state, 'enemy_alert', { enemyId: enemy.id, enemyType: enemy.type, x: enemy.x, y: enemy.y });
+    }
+    if (result.lostTarget) {
+      emitEvent(state, 'enemy_lost_player', { enemyId: enemy.id, enemyType: enemy.type, x: enemy.x, y: enemy.y });
+    }
+    if (!result.fired) continue;
+
+    emitEvent(state, 'enemy_fire', {
+      enemyId: enemy.id,
+      enemyType: enemy.type,
+      weapon: enemySpec(enemy.type).weapon,
+      x: enemy.x,
+      y: enemy.y,
+      angle: enemy.aim,
+      pellets: result.bullets.length,
+    });
+    for (const spawn of result.bullets) {
+      spawnProjectile(state, spawn, enemy.id);
+    }
+  }
+}
+
+/**
+ * Remove dead enemies, emit their death and roll their loot exactly once. A
+ * dropped pickup is given the next pickup id and queued on `state.pickups`.
+ *
+ * @param {GameState} state
+ */
+function reapEnemies(state) {
+  const enemies = state.enemies;
+  if (!Array.isArray(enemies)) return;
+  let write = 0;
+
+  for (let i = 0; i < enemies.length; i += 1) {
+    const enemy = enemies[i];
+    if (isEnemyAlive(enemy)) {
+      enemies[write++] = enemy;
+      continue;
+    }
+    if (enemy.deadHandled) continue;
+
+    enemy.deadHandled = true;
+    emitEvent(state, 'enemy_death', {
+      enemyId: enemy.id,
+      enemyType: enemy.type,
+      x: enemy.x,
+      y: enemy.y,
+    });
+
+    const loot = rollLoot(state.rng, enemy.type);
+    if (!loot) continue;
+    const pickup = createPickup({
+      id: state.nextPickupId,
+      pickupType: loot.type,
+      amount: loot.amount,
+      x: enemy.x,
+      y: enemy.y,
+    });
+    state.nextPickupId += 1;
+    state.pickups.push(pickup);
+    emitEvent(state, 'loot_drop', {
+      enemyId: enemy.id,
+      pickupId: pickup.id,
+      pickupType: pickup.pickupType,
+      amount: pickup.amount,
+      x: pickup.x,
+      y: pickup.y,
+    });
+  }
+
+  enemies.length = write;
+}
+
+/**
+ * Apply a collected pickup to the game state and return what happened.
+ *
+ * @param {GameState} state
+ * @param {object} pickup
+ * @returns {{ pickupType: string, amount: number }}
+ */
+function applyPickup(state, pickup) {
+  const amount = Number.isFinite(pickup.amount) ? pickup.amount : 0;
+  switch (pickup.pickupType) {
+    case 'health':
+      healPlayer(state.player, amount);
+      break;
+    case 'armour':
+      addArmour(state.player, amount);
+      break;
+    case 'ammo':
+      state.player.reserve += amount;
+      if (state.player.weapons?.[state.player.weapon]) {
+        state.player.weapons[state.player.weapon].reserve = state.player.reserve;
+      }
+      break;
+    case 'cash':
+    default:
+      state.cash += amount;
+      break;
+  }
+  return { pickupType: pickup.pickupType, amount };
+}
+
+/**
+ * Let the player walk over pickups lying on the ground, applying their effect
+ * and emitting a `pickup` event. Dead pickups are compacted out in place.
+ *
+ * @param {GameState} state
+ */
+function updatePickups(state) {
+  if (!Array.isArray(state.pickups) || !isPlayerAlive(state.player)) return;
+  const pickups = state.pickups;
+  let write = 0;
+
+  for (let i = 0; i < pickups.length; i += 1) {
+    const pickup = pickups[i];
+    if (!pickup || pickup.alive === false) continue;
+    const overlaps = circlesOverlap(
+      { x: state.player.x, y: state.player.y, r: state.player.radius },
+      { x: pickup.x, y: pickup.y, r: pickup.radius },
+    );
+    if (overlaps) {
+      const applied = applyPickup(state, pickup);
+      pickup.alive = false;
+      emitEvent(state, 'pickup', {
+        pickupId: pickup.id,
+        pickupType: applied.pickupType,
+        amount: applied.amount,
+        x: pickup.x,
+        y: pickup.y,
+      });
+      continue;
+    }
+    pickups[write++] = pickup;
+  }
+
+  pickups.length = write;
+}
+
+/**
+ * Flag game over once the player has died.
+ *
+ * @param {GameState} state
+ */
+function updatePlayerDeath(state) {
+  if (!isPlayerAlive(state.player)) {
+    if (!state.gameOver) emitEvent(state, 'player_death', { x: state.player.x, y: state.player.y });
+    state.gameOver = true;
+  }
 }
 
 function updateWanted(state) {
@@ -857,6 +1089,7 @@ export function update(state) {
   if (state.gameOver || state.paused) return state;
 
   handleVehicleIntent(state);
+  updateEnemies(state);
 
   const vehicle = drivingVehicle(state);
   if (vehicle) {
@@ -869,6 +1102,9 @@ export function update(state) {
   }
 
   updateBullets(state);
+  reapEnemies(state);
+  updatePickups(state);
+  updatePlayerDeath(state);
   updateCamera(state);
   updateWanted(state);
   return state;
