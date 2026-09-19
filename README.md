@@ -4,11 +4,12 @@ A dependency-free top-down shooter web game built with plain HTML, CSS,
 ECMAScript 2020 modules and the Canvas 2D API. There is no build step and no
 third-party runtime dependency.
 
-This repository is currently at **T4: player movement, aim, health and camera
-follow**. It contains the project skeleton and the pure simulation core
-(constants, geometry, seeded rng, the fixed-timestep loop, the city map with
-collision and clamping, and the player entity with a dead-zone camera follow),
-plus keyboard/mouse input in `src/ui/input.js`. Audio hooks in a later task.
+This repository is currently at **T5: canvas rendering and HUD skeleton**. It
+contains the project skeleton and the pure simulation core (constants,
+geometry, seeded rng, the fixed-timestep loop, the city map with collision and
+clamping, and the player entity with a dead-zone camera follow), keyboard/mouse
+input in `src/ui/input.js`, and the camera-transform renderer and HUD in
+`src/ui/render.js` and `src/ui/hud.js`. Audio hooks in a later task.
 
 ## Run
 
@@ -46,11 +47,16 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
 - T3: `src/core/map.js` - a deterministic ~100x100 tile grid
   (`ROAD`/`SIDEWALK`/`BUILDING`/`GRASS`), named spawn points, pure circle-vs-tile
   collision (`circleCollides`, `moveCircle`) and `clampCamera`.
-- T4 (this task): `src/core/player.js` - eight-direction movement with
-  normalised diagonals, sprint, mouse aim and armour-before-health damage;
+- T4: `src/core/player.js` - eight-direction movement with normalised
+  diagonals, sprint, mouse aim and armour-before-health damage;
   `src/ui/input.js` - keyboard/mouse events reduced to a plain intent object;
-  dead-zone + lerp camera follow in `src/core/game.js`; `src/main.js` renders the
-  camera view, aim indicator and a health/armour HUD.
+  dead-zone + lerp camera follow in `src/core/game.js`.
+- T5 (this task): `src/ui/render.js` - camera-transform world rendering with
+  accumulator-driven interpolation for 120/144 Hz displays, a procedural
+  player sprite and procedurally-generated entity sprites (no external assets);
+  `src/ui/hud.js` - health, armour, ammo, weapon, wanted and cash placeholders;
+  the canvas backing store is scaled by the device pixel ratio in
+  `src/main.js`.
 - Audio arrives in a later task and is never committed directly to `main`.
 
 ## Contributing
