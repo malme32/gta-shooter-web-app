@@ -31,6 +31,12 @@ export const KEY_ACTIONS = Object.freeze({
   ShiftRight: 'sprint',
   Space: 'fire',
   KeyR: 'reload',
+  Digit1: 'weapon1',
+  Numpad1: 'weapon1',
+  Digit2: 'weapon2',
+  Numpad2: 'weapon2',
+  Digit3: 'weapon3',
+  Numpad3: 'weapon3',
 });
 
 /**
@@ -42,6 +48,10 @@ export const KEY_ACTIONS = Object.freeze({
  * @property {boolean} sprint
  * @property {boolean} fire
  * @property {boolean} reload
+ * @property {boolean} weapon1 One-shot: equip weapon slot 1 (key `1`).
+ * @property {boolean} weapon2
+ * @property {boolean} weapon3
+ * @property {number} cycleWeapon Accumulated wheel steps (negative = up).
  * @property {number|null} pointerX Canvas-space pointer x, or `null` when unknown.
  * @property {number|null} pointerY Canvas-space pointer y, or `null` when unknown.
  */
@@ -60,6 +70,10 @@ export function createIntent() {
     sprint: false,
     fire: false,
     reload: false,
+    weapon1: false,
+    weapon2: false,
+    weapon3: false,
+    cycleWeapon: 0,
     pointerX: null,
     pointerY: null,
   };
@@ -181,6 +195,10 @@ export function createInput({ intent = createIntent(), target = defaultTarget(),
   const onMouseUp = (event) => {
     if (event.button === 0 || event.button === undefined) intent.fire = false;
   };
+  const onWheel = (event) => {
+    const step = Math.sign(event.deltaY ?? 0);
+    if (step !== 0) intent.cycleWeapon += step;
+  };
   const onContextMenu = (event) => event.preventDefault?.();
   const onBlur = () => resetIntent(intent);
 
@@ -189,6 +207,7 @@ export function createInput({ intent = createIntent(), target = defaultTarget(),
   target.addEventListener('mousemove', onMouseMove);
   target.addEventListener('mousedown', onMouseDown);
   target.addEventListener('mouseup', onMouseUp);
+  target.addEventListener('wheel', onWheel);
   target.addEventListener('contextmenu', onContextMenu);
   target.addEventListener('blur', onBlur);
 
@@ -200,6 +219,7 @@ export function createInput({ intent = createIntent(), target = defaultTarget(),
       target.removeEventListener('mousemove', onMouseMove);
       target.removeEventListener('mousedown', onMouseDown);
       target.removeEventListener('mouseup', onMouseUp);
+      target.removeEventListener('wheel', onWheel);
       target.removeEventListener('contextmenu', onContextMenu);
       target.removeEventListener('blur', onBlur);
     },

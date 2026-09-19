@@ -261,7 +261,11 @@ export function renderHud(ctx, game, size) {
   const weapon = player.weapon ?? game.weapon ?? HUD_DEFAULTS.weapon;
   const spec = WEAPONS[weapon];
   const magazine = Number.isFinite(spec?.magazineSize) ? spec.magazineSize : Math.max(1, ammo);
-  const reserve = Number.isFinite(game.reserveAmmo) ? game.reserveAmmo : HUD_DEFAULTS.reserveAmmo;
+  const reserve = Number.isFinite(player.reserve)
+    ? player.reserve
+    : Number.isFinite(game.reserveAmmo)
+      ? game.reserveAmmo
+      : HUD_DEFAULTS.reserveAmmo;
   const wanted = Number.isFinite(game.wanted) ? game.wanted : HUD_DEFAULTS.wanted;
   const cash = Number.isFinite(game.cash) ? game.cash : HUD_DEFAULTS.cash;
 

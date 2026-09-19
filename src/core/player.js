@@ -47,11 +47,38 @@ import { moveCircle } from './map.js';
  * @property {number} maxArmour
  * @property {boolean} alive
  * @property {number} aim Aim angle, in radians, measured from the +x axis.
- * @property {number} cooldown Ticks until the next shot may be fired.
+ * @property {number} cooldown Ticks until the equipped weapon may fire again.
+ *   Mirrors the matching entry in `weapons`.
  * @property {number} reloadTicks Ticks remaining on an in-progress reload.
- * @property {string} weapon
- * @property {number} ammo Rounds left in the magazine.
+ * @property {boolean} reloading Whether a reload is in progress.
+ * @property {string} weapon Currently equipped weapon id.
+ * @property {number} ammo Rounds left in the equipped weapon's magazine.
+ * @property {number} reserve Reserve rounds available to reload from.
+ * @property {Record<string, { ammo: number, reserve: number, cooldown: number }>} weapons
+ *   Per-weapon magazine, reserve and firing-cooldown state, so switching
+ *   weapons preserves each one's ammo and remaining cooldown.
+ * @property {boolean} fireHeld Previous tick's trigger state, used for
+ *   semi-automatic edge detection.
  */
+
+/**
+ * Build the initial per-weapon ammo table.
+ *
+ * @param {Record<string, { ammo?: number, reserve?: number, cooldown?: number }>} [overrides]
+ * @returns {Record<string, { ammo: number, reserve: number, cooldown: number }>}
+ */
+function createArsenal(overrides) {
+  /** @type {Record<string, { ammo: number, reserve: number, cooldown: number }>} */
+  const arsenal = {};
+  for (const spec of Object.values(WEAPONS)) {
+    const given = overrides?.[spec.id];
+    const ammo = Number.isFinite(given?.ammo) ? given.ammo : spec.magazineSize;
+    const reserve = Number.isFinite(given?.reserve) ? given.reserve : spec.reserveAmmo;
+    const cooldown = Number.isFinite(given?.cooldown) ? Math.max(0, given.cooldown) : 0;
+    arsenal[spec.id] = { ammo, reserve, cooldown };
+  }
+  return arsenal;
+}
 
 /**
  * Create a player at a world position.
@@ -65,6 +92,8 @@ import { moveCircle } from './map.js';
  * @param {number} [options.health=PLAYER_STARTING_HEALTH]
  * @param {number} [options.armour=PLAYER_STARTING_ARMOUR]
  * @param {string} [options.weapon=DEFAULT_WEAPON]
+ * @param {Record<string, { ammo?: number, reserve?: number, cooldown?: number }>} [options.weapons]
+ *   Initial magazine/reserve/cooldown overrides keyed by weapon id.
  * @returns {Player}
  */
 export function createPlayer({
@@ -76,10 +105,12 @@ export function createPlayer({
   health = PLAYER_STARTING_HEALTH,
   armour = PLAYER_STARTING_ARMOUR,
   weapon = DEFAULT_WEAPON,
+  weapons,
 } = {}) {
   const spec = WEAPONS[weapon] ?? WEAPONS[DEFAULT_WEAPON];
   const maxHealth = PLAYER_MAX_HEALTH;
   const maxArmour = PLAYER_MAX_ARMOUR;
+  const arsenal = createArsenal(weapons);
 
   return {
     id,
@@ -95,8 +126,12 @@ export function createPlayer({
     aim: 0,
     cooldown: 0,
     reloadTicks: 0,
+    reloading: false,
     weapon: spec.id,
-    ammo: spec.magazineSize,
+    ammo: arsenal[spec.id].ammo,
+    reserve: arsenal[spec.id].reserve,
+    weapons: arsenal,
+    fireHeld: false,
   };
 }
 
