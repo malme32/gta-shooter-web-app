@@ -1,0 +1,18 @@
+# Agent scratch/state (never commit)
+.agent/
+.agent-company/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Secrets
+*.env
+.env*
+secrets/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
