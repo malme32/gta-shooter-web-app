@@ -253,9 +253,9 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone } = {}) {
 }
 
 /**
- * Reset a state to its initial values, keeping the map and rng. When the game
- * was created with a numeric seed the rng is rewound so the restart is
- * reproducible.
+ * Reset a state to its initial values, keeping the map and rng. Live bullets
+ * and shootable targets are discarded. When the game was created with a numeric
+ * seed the rng is rewound so the restart is reproducible.
  *
  * @param {GameState} state
  * @returns {GameState}
@@ -268,6 +268,7 @@ export function restart(state) {
   state.accumulator = 0;
   state.bullets.length = 0;
   state.nextBulletId = 0;
+  state.targets.length = 0;
   state.events = [];
   state.heat = 0;
   state.wanted = 0;
@@ -464,7 +465,7 @@ function updateWeapon(state) {
     }
   }
   if (input.cycleWeapon) {
-    cycleWeapon(player, Math.sign(input.cycleWeapon));
+    cycleWeapon(player, input.cycleWeapon);
     input.cycleWeapon = 0;
   }
 
