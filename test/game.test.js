@@ -6,6 +6,7 @@ import {
   update,
   advance,
   restart,
+  setViewport,
   drainEvents,
   emitEvent,
   addHeat,
@@ -18,6 +19,8 @@ import {
   TILE_SIZE,
   PLAYER_RADIUS,
   WANTED_MAX_HEAT,
+  CAMERA_DEADZONE_X,
+  CAMERA_DEADZONE_Y,
 } from '../src/core/constants.js';
 
 function makeMap(width, height, solids = []) {
@@ -284,4 +287,54 @@ test('missing or malformed state is rejected', () => {
   assert.throws(() => advance(), /requires a game state/);
   assert.throws(() => restart(), /requires a game state/);
   assert.throws(() => drainEvents(), /requires a game state/);
+  assert.throws(() => setViewport(), /requires a game state/);
+});
+
+test('setViewport refreshes the camera and keeps the player in the dead-zone', () => {
+  const map = makeMap(120, 120);
+  const game = createGame({
+    map,
+    spawn: { x: 60 * TILE_SIZE, y: 60 * TILE_SIZE },
+    seed: 1,
+    viewport: { width: 960, height: 540 },
+  });
+
+  for (const [width, height] of [
+    [960, 540],
+    [400, 300],
+  ]) {
+    setViewport(game, width, height);
+
+    const centreOf = (camera) => ({
+      x: camera.x + camera.width / 2,
+      y: camera.y + camera.height / 2,
+    });
+
+    assert.equal(game.viewport.width, width);
+    assert.equal(game.viewport.height, height);
+    assert.equal(game.camera.width, width, 'camera width must follow the viewport');
+    assert.equal(game.camera.height, height, 'camera height must follow the viewport');
+
+    // Re-centre immediately, then let the follow loop run for a while.
+    for (let i = 0; i < 240; i += 1) update(game);
+
+    const centre = centreOf(game.camera);
+    assert.ok(
+      Math.abs(game.player.x - centre.x) <= CAMERA_DEADZONE_X + 1e-6,
+      `player x ${game.player.x} outside dead-zone (centre ${centre.x}) at ${width}x${height}`,
+    );
+    assert.ok(
+      Math.abs(game.player.y - centre.y) <= CAMERA_DEADZONE_Y + 1e-6,
+      `player y ${game.player.y} outside dead-zone (centre ${centre.y}) at ${width}x${height}`,
+    );
+  }
+});
+
+test('setViewport ignores invalid sizes and falls back to the defaults', () => {
+  const game = createGame({ map: makeMap(40, 40), viewport: { width: 800, height: 600 } });
+  setViewport(game, 0, undefined);
+  assert.equal(game.viewport.width, 960);
+  assert.equal(game.viewport.height, 540);
+  assert.equal(game.camera.width, 960);
+  assert.equal(game.camera.height, 540);
 });

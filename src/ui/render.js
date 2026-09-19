@@ -11,10 +11,12 @@
  * const view = interpolateScene(prevSnapshot, currSnapshot, alpha);
  * ```
  *
- * Every helper in this module is pure and Node-testable; only the `draw*`/`render*`
- * functions touch a `CanvasRenderingContext2D`. Sprites are generated
- * procedurally from the palette tables below, so the game makes **no external
- * image or asset requests**.
+ * Every helper in this module is pure and Node-testable, with one exception:
+ * {@link sampleFrame} advances the fixed-timestep simulation (mutating the game
+ * state it is passed) before delegating to the pure interpolation helpers. Only
+ * the `draw*`/`render*` functions touch a `CanvasRenderingContext2D`. Sprites
+ * are generated procedurally from the palette tables below, so the game makes
+ * **no external image or asset requests**.
  *
  * @module ui/render
  */

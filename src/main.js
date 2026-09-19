@@ -20,7 +20,7 @@
  * only exercise `src/core/`.
  */
 
-import { createGame } from './core/game.js';
+import { createGame, setViewport } from './core/game.js';
 import { createMap } from './core/map.js';
 import { createInput } from './ui/input.js';
 import {
@@ -75,7 +75,9 @@ function syncCanvasSize(canvas, ctx, game) {
   }
   ctx.imageSmoothingEnabled = true;
 
-  game.viewport = { width, height };
+  if (game.viewport?.width !== width || game.viewport?.height !== height) {
+    setViewport(game, width, height);
+  }
   return dpr;
 }
 
@@ -137,7 +139,17 @@ function bootstrap() {
     requestAnimationFrame(frame);
   }
 
-  window.addEventListener('beforeunload', () => input.dispose());
+  // The frame loop already re-syncs every frame, but reacting to `resize`
+  // applies the new camera viewport immediately instead of one frame later.
+  const onResize = () => {
+    dpr = syncCanvasSize(canvas, ctx, game);
+  };
+  window.addEventListener('resize', onResize);
+
+  window.addEventListener('beforeunload', () => {
+    input.dispose();
+    window.removeEventListener('resize', onResize);
+  });
   requestAnimationFrame(frame);
 }
 

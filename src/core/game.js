@@ -372,6 +372,41 @@ export function snapCamera(state) {
 }
 
 /**
+ * Apply a new canvas viewport size to the game state.
+ *
+ * The camera carries its own `width`/`height`, captured from the viewport at
+ * creation time; the dead-zone, follow and clamp maths all read them. A canvas
+ * or window resize must therefore refresh both the viewport **and** the camera
+ * dimensions, otherwise the camera keeps framing for the old size and the
+ * player drifts off-screen. The camera is re-centred on the player for the new
+ * size and clamped to the map, so the dead-zone centre matches the visible
+ * area immediately.
+ *
+ * @param {GameState} state
+ * @param {number} width New viewport width, in logical pixels.
+ * @param {number} height New viewport height, in logical pixels.
+ * @returns {{ width: number, height: number }} The normalised viewport applied.
+ */
+export function setViewport(state, width, height) {
+  if (!state || typeof state !== 'object') {
+    throw new TypeError('setViewport requires a game state');
+  }
+  const viewport = normalizeViewport({ width, height });
+  state.viewport = viewport;
+
+  if (state.camera) {
+    state.camera = {
+      x: state.camera.x,
+      y: state.camera.y,
+      width: viewport.width,
+      height: viewport.height,
+    };
+    state.camera = state.player ? snapCamera(state) : clampCamera(state.grid, state.camera);
+  }
+  return viewport;
+}
+
+/**
  * Convert a canvas-space point to world space for the given camera.
  *
  * @param {{ x: number, y: number }} camera
