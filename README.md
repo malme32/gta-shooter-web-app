@@ -4,14 +4,15 @@ A dependency-free top-down shooter web game built with plain HTML, CSS,
 ECMAScript 2020 modules and the Canvas 2D API. There is no build step and no
 third-party runtime dependency.
 
-This repository is currently at **T8: vehicles - enter/exit, arcade driving,
-run-over and destruction**. It contains the project skeleton and the pure
-simulation core (constants, geometry, seeded rng, the fixed-timestep loop, the
-city map with collision and clamping, and the player entity with a dead-zone
-camera follow), keyboard/mouse input in `src/ui/input.js`, the camera-transform
-renderer and HUD in `src/ui/render.js` and `src/ui/hud.js`, the weapon/projectile
-systems in `src/core/weapons.js` and `src/core/bullet.js`, and the vehicle system
-in `src/core/vehicle.js`. Audio hooks in a later task.
+This repository is currently at **T7: enemies and AI**. It contains the project
+skeleton and the pure simulation core (constants, geometry, seeded rng, the
+fixed-timestep loop, the city map with collision and clamping, and the player
+entity with a dead-zone camera follow), keyboard/mouse input in
+`src/ui/input.js`, the camera-transform renderer and HUD in `src/ui/render.js`
+and `src/ui/hud.js`, the weapon/projectile systems in `src/core/weapons.js` and
+`src/core/bullet.js`, the vehicle system in `src/core/vehicle.js`, and the enemy
+archetypes and AI in `src/core/enemy.js` and `src/core/ai.js`. Audio hooks in a
+later task.
 
 ## Run
 
@@ -64,12 +65,17 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
   switching; `src/core/bullet.js` - projectiles with swept (non-tunnelling)
   tile collision, ttl and damage; `muzzle`, `tracer`, `hit` and `bullet_wall`
   events in `src/core/game.js`.
-- T8 (this task): `src/core/vehicle.js` - arcade throttle/steer/friction with
+- T8: `src/core/vehicle.js` - arcade throttle/steer/friction with
   building collision, health and explosions; `E` enters/exits the nearest
   vehicle (never onto a building tile), `Space` handbrakes while driving,
   run-over damage and blast damage to nearby entities; vehicle rendering with
   heading interpolation and a driving HUD in `src/ui/render.js` and
   `src/ui/hud.js`.
+- T7 (this task): `src/core/enemy.js` - thug/shooter/brute archetypes with
+  armour-before-health damage, death and seeded loot; `src/core/ai.js` -
+  idle/patrol/chase/attack state machine with tile-aware line-of-sight,
+  wall-sliding steering and per-archetype fire cadence; enemies spawn from
+  `map.spawns.enemySpawns`, drop pickups on death and are collected on contact.
 - Audio arrives in a later task and is never committed directly to `main`.
 
 ## Contributing

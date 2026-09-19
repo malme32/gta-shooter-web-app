@@ -53,6 +53,7 @@ export const PLAYER_SPRITE = Object.freeze({
 export const ENTITY_SPRITES = Object.freeze({
   vehicle: Object.freeze({ shape: 'vehicle', width: 34, height: 20, color: '#f97316', outline: '#7c2d12' }),
   pedestrian: Object.freeze({ shape: 'person', radius: 8, color: '#f472b6', outline: '#831843' }),
+  enemy: Object.freeze({ shape: 'person', radius: 10, color: '#f87171', outline: '#7f1d1d' }),
   bullet: Object.freeze({ shape: 'bullet', radius: 4, color: '#fde047', outline: '#a16207' }),
   pickup: Object.freeze({ shape: 'pickup', radius: 9, color: '#a3e635', outline: '#3f6212' }),
   default: Object.freeze({ shape: 'circle', radius: 10, color: '#94a3b8', outline: '#334155' }),
@@ -192,6 +193,8 @@ export function visibleTileBounds(camera, grid, tileSize = TILE_SIZE) {
 function collectEntities(game) {
   const entities = [];
   if (Array.isArray(game?.vehicles)) entities.push(...game.vehicles);
+  if (Array.isArray(game?.enemies)) entities.push(...game.enemies);
+  if (Array.isArray(game?.pickups)) entities.push(...game.pickups);
   if (Array.isArray(game?.entities)) entities.push(...game.entities);
   if (Array.isArray(game?.bullets)) entities.push(...game.bullets);
   return entities;
