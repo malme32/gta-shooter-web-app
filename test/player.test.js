@@ -164,6 +164,19 @@ test('a dead player does not move', () => {
   assert.equal(player.x, 100);
 });
 
+test('movePlayer tolerates a missing map or player without throwing', () => {
+  const map = makeMap(20, 20);
+  const player = createPlayer({ x: 100, y: 100 });
+
+  const noPlayer = movePlayer(map, null, { right: true });
+  assert.deepEqual(noPlayer, { x: 0, y: 0, hitX: false, hitY: false, moved: false });
+
+  const noMap = movePlayer(null, player, { right: true });
+  assert.equal(noMap.moved, false);
+  assert.equal(player.x, 100);
+  assert.equal(player.y, 100);
+});
+
 test('aimAt points the player at a world target', () => {
   const player = createPlayer({ x: 100, y: 100 });
   assert.ok(Math.abs(aimAt(player, 200, 100) - 0) < 1e-12);

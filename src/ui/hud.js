@@ -107,24 +107,48 @@ export function formatCash(amount) {
 /**
  * Compute every HUD rectangle for a physical canvas size. Pure: no drawing.
  *
+ * Panel widths scale with the canvas so the left and right columns never
+ * overlap on narrow viewports, and the right-hand panels are flagged hidden
+ * (`wantedVisible`/`cashVisible`) once there is no room for them next to the
+ * left column.
+ *
  * @param {number} width Logical canvas width, in CSS pixels.
  * @param {number} height Logical canvas height, in CSS pixels.
- * @returns {object} Named rectangles `{ x, y, width, height }`.
+ * @returns {object} Named rectangles `{ x, y, width, height }` plus the
+ *   `wantedVisible`/`cashVisible` flags.
  */
 export function computeHudLayout(width, height) {
   const w = Number.isFinite(width) && width > 0 ? width : 960;
   const h = Number.isFinite(height) && height > 0 ? height : 540;
   const pad = 12;
+  const gap = 10;
+  const bottomY = h - pad - 20;
+
+  const healthWidth = clamp(w * 0.35, 72, 180);
+  const health = { x: pad, y: pad, width: healthWidth, height: 12 };
+  const armour = { x: pad, y: pad + 18, width: healthWidth, height: 10 };
+  const ammo = { x: pad, y: pad + 36, width: clamp(healthWidth * 0.66, 56, 120), height: 8 };
+
+  const wantedWidth = clamp(w * 0.22, 60, 130);
+  const wanted = { x: w - pad - wantedWidth, y: pad, width: wantedWidth, height: 16 };
+
+  const weaponWidth = clamp(w * 0.32, 90, 220);
+  const weapon = { x: pad, y: bottomY, width: weaponWidth, height: 16 };
+
+  const cashWidth = clamp(w * 0.26, 72, 160);
+  const cash = { x: w - pad - cashWidth, y: bottomY, width: cashWidth, height: 20 };
 
   return {
     width: w,
     height: h,
-    health: { x: pad, y: pad, width: 180, height: 12 },
-    armour: { x: pad, y: pad + 18, width: 180, height: 10 },
-    ammo: { x: pad, y: pad + 36, width: 120, height: 8 },
-    weapon: { x: pad, y: h - pad - 14, width: 220, height: 16 },
-    wanted: { x: w - pad - 130, y: pad, width: 130, height: 16 },
-    cash: { x: w - pad - 160, y: h - pad - 18, width: 160, height: 20 },
+    health,
+    armour,
+    ammo,
+    weapon,
+    wanted,
+    cash,
+    wantedVisible: wanted.x >= health.x + health.width + gap,
+    cashVisible: cash.x >= weapon.x + weapon.width + gap,
   };
 }
 
@@ -254,13 +278,17 @@ export function renderHud(ctx, game, size) {
     color: HUD_COLORS.muted,
   });
 
-  drawLabel(ctx, formatCash(cash), layout.cash.x + layout.cash.width, layout.cash.y + layout.cash.height / 2, {
-    color: HUD_COLORS.cash,
-    font: 15,
-    align: 'right',
-  });
+  if (layout.cashVisible) {
+    drawLabel(ctx, formatCash(cash), layout.cash.x + layout.cash.width, layout.cash.y + layout.cash.height / 2, {
+      color: HUD_COLORS.cash,
+      font: 15,
+      align: 'right',
+    });
+  }
 
-  drawWanted(ctx, layout.wanted, wanted);
+  if (layout.wantedVisible) {
+    drawWanted(ctx, layout.wanted, wanted);
+  }
   ctx.restore();
 
   return layout;

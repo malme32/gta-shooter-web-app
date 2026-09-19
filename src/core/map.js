@@ -26,6 +26,8 @@ import {
   TILE_SIDEWALK,
   TILE_BUILDING,
   TILE_GRASS,
+  SOLID_TILES,
+  VEHICLE_RADIUS,
 } from './constants.js';
 import { createRng } from './rng.js';
 import { circleAabbOverlap, clamp } from './geometry.js';
@@ -73,13 +75,19 @@ function assertPositiveInt(value, name) {
 }
 
 /**
+ * Lookup of every solid tile value. Derived from `SOLID_TILES` so adding a new
+ * solid tile to the constant is enough to make it block movement.
+ */
+const SOLID_TILE_SET = new Set(SOLID_TILES);
+
+/**
  * Does this tile value block movement?
  *
  * @param {number} tile
  * @returns {boolean}
  */
 export function isSolidTile(tile) {
-  return tile === TILE_BUILDING;
+  return SOLID_TILE_SET.has(tile);
 }
 
 /**
@@ -307,6 +315,26 @@ function spread(tiles, count) {
 }
 
 /**
+ * Sample up to `count` tile centres that a circle of `radius` can occupy,
+ * trying each pool in order and returning `[]` when none fit.
+ *
+ * @param {{ width: number, height: number, tiles: number[] }} grid
+ * @param {Array<Array<[number, number]>>} pools
+ * @param {number} count
+ * @param {number} radius
+ * @returns {Vec[]}
+ */
+function spreadFitting(grid, pools, count, radius) {
+  for (const tiles of pools) {
+    const fits = tiles
+      .map(([tx, ty]) => tileCenter(tx, ty))
+      .filter((point) => canStandAt(grid, point.x, point.y, radius));
+    if (fits.length > 0) return spread(fits, count);
+  }
+  return [];
+}
+
+/**
  * The road tile closest to a tile coordinate.
  *
  * @param {Array<[number, number]>} tiles
@@ -391,7 +419,7 @@ function buildSpawns(grid) {
 
   return {
     playerStart,
-    vehicleSpawns: spread(vehiclePool, 8).map(([tx, ty]) => tileCenter(tx, ty)),
+    vehicleSpawns: spreadFitting(grid, [vehiclePool, roads], 8, VEHICLE_RADIUS),
     enemySpawns: pickFar(enemyPool, playerStart, 8, 8),
     pickupSpawns: spread(pickupPool, 12).map(([tx, ty]) => tileCenter(tx, ty)),
     missionSpawns: spread(missionPool, 4).map(([tx, ty]) => tileCenter(tx, ty)),
@@ -426,12 +454,26 @@ function tileFor(tx, ty, blockSize, blocksX, parkBlocks) {
 }
 
 /**
+ * Row-major index of block `(1, 1)`.
+ *
+ * Block `(1, 1)` always contains an interior core when `blockSize >= 4` and
+ * `blocksX, blocksY > 1`, so it is the safe place to force a park or a building
+ * when the random pass produced only one of the two.
+ *
+ * @param {number} blocksX
+ * @returns {number}
+ */
+function interiorBlockIndex(blocksX) {
+  return blocksX + 1;
+}
+
+/**
  * Generate a deterministic city map.
  *
  * @param {object} [options]
  * @param {number} [options.width=100] Grid width in tiles.
  * @param {number} [options.height=100] Grid height in tiles.
- * @param {number} [options.blockSize=10] Road spacing in tiles (`>= 3`).
+ * @param {number} [options.blockSize=10] Road spacing in tiles (`>= 4`).
  * @param {number} [options.seed=1] Seed used when `rng` is omitted.
  * @param {() => number} [options.rng] Random function (`[0,1)`), for tests.
  * @returns {GameMap}
@@ -446,7 +488,7 @@ export function createMap({
   assertPositiveInt(width, 'map.width');
   assertPositiveInt(height, 'map.height');
   assertPositiveInt(blockSize, 'map.blockSize');
-  if (blockSize < 3) throw new Error('map.blockSize must be at least 3');
+  if (blockSize < 4) throw new Error('map.blockSize must be at least 4');
   if (blockSize >= width || blockSize >= height) {
     throw new Error('map.blockSize must be smaller than map.width and map.height');
   }
@@ -462,7 +504,7 @@ export function createMap({
     }
   }
   if (parkBlocks.size === 0 && blocksX > 1 && blocksY > 1) {
-    parkBlocks.add(blocksX + 1);
+    parkBlocks.add(interiorBlockIndex(blocksX));
   }
   if (parkBlocks.size === blocksX * blocksY && blocksX * blocksY > 1) {
     parkBlocks.delete(0);

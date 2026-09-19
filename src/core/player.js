@@ -188,9 +188,11 @@ export function moveIntent(input) {
  * @returns {{ x: number, y: number, hitX: boolean, hitY: boolean, moved: boolean }}
  */
 export function movePlayer(map, player, input, dtSeconds = TICK_SECONDS) {
-  const idle = { x: player.x, y: player.y, hitX: false, hitY: false, moved: false };
-  if (!map || !player || !isAlive(player)) return idle;
+  if (!map || !player || !isAlive(player)) {
+    return { x: player?.x ?? 0, y: player?.y ?? 0, hitX: false, hitY: false, moved: false };
+  }
 
+  const idle = { x: player.x, y: player.y, hitX: false, hitY: false, moved: false };
   const dir = moveIntent(input);
   if (dir.x === 0 && dir.y === 0) return idle;
 
