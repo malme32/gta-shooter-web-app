@@ -224,10 +224,41 @@ test('createGame accepts an rng function and restart rewinds a seeded rng', () =
   const state = createGame({ map, rng });
   assert.equal(state.rng, rng);
 
+  restart(state);
+  assert.equal(state.rng, rng, 'restart must keep a caller-supplied rng function');
+
   const seeded = createGame({ map, seed: 99 });
   const first = seeded.rng();
   restart(seeded);
   assert.equal(seeded.rng(), first);
+});
+
+test('createGame rejects an rng function combined with a numeric seed', () => {
+  assert.throws(
+    () => createGame({ map: makeMap(4, 4), rng: createRng(1), seed: 2 }),
+    /not both/,
+  );
+});
+
+test('restart resets input in place so a cached reference still drives movement', () => {
+  const state = createGame({ map: makeMap(9, 9), seed: 1 });
+  const cached = state.input; // exactly what src/main.js bindKeyboard(game.input) captures
+  assert.equal(state.input, cached);
+
+  state.input.left = true;
+  update(state);
+  restart(state);
+
+  assert.equal(state.input, cached, 'restart must not detach the input object');
+  assert.equal(cached.left, false, 'restart must clear the input flags in place');
+
+  const startX = state.player.x;
+  cached.left = true;
+  for (let i = 0; i < 30; i += 1) update(state);
+  assert.ok(
+    state.player.x < startX,
+    `cached input reference must still move the player (x=${state.player.x})`,
+  );
 });
 
 test('getWantedStars maps heat to the configured thresholds', () => {
