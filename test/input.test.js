@@ -9,6 +9,8 @@ import {
   toCanvasPoint,
   applyPointer,
   createInput,
+  takeConfirm,
+  CONFIRM_KEYS,
   KEY_ACTIONS,
 } from '../src/ui/input.js';
 
@@ -43,8 +45,8 @@ class FakeTarget {
 
 test('createIntent starts idle with an unknown pointer', () => {
   const intent = createIntent();
-  for (const key of ['up', 'down', 'left', 'right', 'sprint', 'fire', 'reload']) {
-    assert.equal(intent[key], false);
+  for (const key of ['up', 'down', 'left', 'right', 'sprint', 'fire', 'reload', 'confirm', 'pause', 'mute']) {
+    assert.equal(intent[key], false, key);
   }
   assert.equal(intent.pointerX, null);
   assert.equal(intent.pointerY, null);
@@ -63,6 +65,10 @@ test('actionForKey maps WASD, the arrows and modifiers', () => {
   assert.equal(actionForKey('ShiftRight'), 'sprint');
   assert.equal(actionForKey('Space'), 'fire');
   assert.equal(actionForKey('KeyR'), 'reload');
+  assert.equal(actionForKey('KeyE'), 'enter');
+  assert.equal(actionForKey('KeyP'), 'pause');
+  assert.equal(actionForKey('KeyM'), 'mute');
+  assert.equal(actionForKey('Enter'), 'restart');
   assert.equal(actionForKey('KeyZ'), null);
 });
 
@@ -155,4 +161,52 @@ test('createInput fills a caller-supplied intent object', () => {
   assert.equal(intent, supplied);
   target.emit('keydown', { code: 'ShiftLeft' });
   assert.equal(supplied.sprint, true);
+});
+
+test('a fresh Space or Enter press is a one-shot confirm', () => {
+  assert.deepEqual(CONFIRM_KEYS, ['Enter', 'NumpadEnter', 'Space']);
+  const target = new FakeTarget();
+  const { intent } = createInput({ target });
+
+  target.emit('keydown', { code: 'Space' });
+  assert.equal(takeConfirm(intent), true, 'the first press confirms');
+  assert.equal(takeConfirm(intent), false, 'reading consumes the confirm');
+
+  const enterTarget = new FakeTarget();
+  const enter = createInput({ target: enterTarget }).intent;
+  enterTarget.emit('keydown', { code: 'Enter' });
+  assert.equal(takeConfirm(enter), true);
+});
+
+test('holding fire through death cannot auto-restart the game-over screen', () => {
+  const target = new FakeTarget();
+  const { intent } = createInput({ target });
+
+  // The player presses and holds Space (fire) long before dying: it confirms
+  // the title start exactly once.
+  target.emit('keydown', { code: 'Space' });
+  assert.equal(takeConfirm(intent, { lockout: 0 }), true);
+  assert.equal(intent.fire, true, 'the trigger is still held');
+
+  // Dying while the trigger is still down: the key stays held and OS key-repeat
+  // keeps firing keydown, but neither must re-arm confirm.
+  for (let i = 0; i < 30; i += 1) {
+    target.emit('keydown', { code: 'Space', repeat: true });
+    assert.equal(takeConfirm(intent, { lockout: 0 }), false, `frame ${i}: held trigger must not confirm`);
+  }
+
+  // Only releasing and pressing again restarts.
+  target.emit('keyup', { code: 'Space' });
+  target.emit('keydown', { code: 'Space' });
+  assert.equal(takeConfirm(intent, { lockout: 0 }), true);
+});
+
+test('takeConfirm honours the game-over lockout but still consumes the press', () => {
+  const intent = createIntent();
+  intent.confirm = true;
+  assert.equal(takeConfirm(intent, { lockout: 0.4 }), false, 'suppressed while the overlay settles');
+  assert.equal(intent.confirm, false, 'a suppressed press is still consumed');
+
+  intent.confirm = true;
+  assert.equal(takeConfirm(intent, { lockout: 0 }), true);
 });

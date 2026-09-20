@@ -18,6 +18,9 @@ import { WEAPONS } from '../core/constants.js';
 import { clamp } from '../core/geometry.js';
 import { missionLabel } from '../core/mission.js';
 
+/** How long a player hit flash lingers, in seconds. */
+export const HIT_FLASH_SECONDS = 0.35;
+
 /** HUD palette. Kept local so the HUD theme is tweakable in one place. */
 export const HUD_COLORS = Object.freeze({
   panel: 'rgba(2, 6, 23, 0.68)',
@@ -39,6 +42,8 @@ export const HUD_COLORS = Object.freeze({
   mission: '#facc15',
   outcomeWin: '#4ade80',
   outcomeLose: '#ef4444',
+  flash: '#ef4444',
+  overlay: 'rgba(2, 6, 23, 0.82)',
 });
 
 /** Terminal-outcome banner copy, keyed by the core outcome id. */
@@ -430,15 +435,17 @@ export function renderHud(ctx, game, size) {
 
   if (layout.wantedVisible) {
     drawWanted(ctx, layout.wanted, wanted);
+    drawLabel(ctx, `WANTED ${wanted}`, layout.wanted.x, layout.wanted.y - 2, {
+      color: HUD_COLORS.star,
+      font: 10,
+      align: 'left',
+      baseline: 'bottom',
+    });
   }
 
   const objective = missionLabel(game.mission);
   if (objective) {
-    drawLabel(ctx, objective, layout.width / 2, layout.health.y + layout.health.height / 2, {
-      color: HUD_COLORS.mission,
-      font: 14,
-      align: 'center',
-    });
+    drawMissionPrompt(ctx, layout, objective);
   }
 
   const best = game.best;
@@ -452,15 +459,245 @@ export function renderHud(ctx, game, size) {
     );
   }
 
-  const banner = outcomeLabel(game.outcome);
-  if (banner) {
-    drawLabel(ctx, banner, layout.width / 2, layout.height / 2, {
-      color: outcomeColor(game.outcome),
-      font: 34,
+  ctx.restore();
+
+  return layout;
+}
+
+/**
+ * Draw the mission objective on a translucent pill so it stays legible over
+ * busy tiles. The HUD's only "prompt" surface, so it lives next to the other
+ * draw routines rather than in `renderHud` inline.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout Result of {@link computeHudLayout}.
+ * @param {string} text
+ */
+export function drawMissionPrompt(ctx, layout, text) {
+  if (!ctx || !layout || !text) return;
+  ctx.font = '14px system-ui, sans-serif';
+  const metrics = typeof ctx.measureText === 'function' ? ctx.measureText(text) : null;
+  const width = (metrics?.width ?? text.length * 7) + 24;
+  const height = 22;
+  const x = layout.width / 2 - width / 2;
+  const y = layout.health.y + layout.health.height / 2 - height / 2;
+
+  ctx.fillStyle = HUD_COLORS.panel;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = HUD_COLORS.border;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  drawLabel(ctx, text, layout.width / 2, y + height / 2, {
+    color: HUD_COLORS.mission,
+    font: 14,
+    align: 'center',
+  });
+}
+
+/**
+ * Fade a hit flash out over its lifetime.
+ *
+ * @param {number} remaining Seconds left on the flash.
+ * @param {number} [duration=HIT_FLASH_SECONDS]
+ * @returns {number} Opacity in `[0, 1]`.
+ */
+export function hitFlashAlpha(remaining, duration = HIT_FLASH_SECONDS) {
+  const span = Number.isFinite(duration) && duration > 0 ? duration : HIT_FLASH_SECONDS;
+  const left = Number.isFinite(remaining) && remaining > 0 ? remaining : 0;
+  return clamp(left / span, 0, 1);
+}
+
+/**
+ * Draw a red damage vignette over the whole canvas. No-op when fully faded.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout Result of {@link computeHudLayout}.
+ * @param {number} alpha Opacity in `[0, 1]`.
+ */
+export function drawHitFlash(ctx, layout, alpha) {
+  if (!ctx || !layout) return;
+  const a = clamp(Number.isFinite(alpha) ? alpha : 0, 0, 1);
+  if (a <= 0) return;
+
+  const cx = layout.width / 2;
+  const cy = layout.height / 2;
+  const inner = Math.min(layout.width, layout.height) * 0.25;
+  const outer = Math.max(layout.width, layout.height) * 0.75;
+  const gradient =
+    typeof ctx.createRadialGradient === 'function'
+      ? ctx.createRadialGradient(cx, cy, inner, cx, cy, outer)
+      : null;
+
+  if (gradient) {
+    gradient.addColorStop(0, 'rgba(239, 68, 68, 0)');
+    gradient.addColorStop(1, `rgba(239, 68, 68, ${(0.5 * a).toFixed(3)})`);
+    ctx.fillStyle = gradient;
+  } else {
+    ctx.fillStyle = `rgba(239, 68, 68, ${(0.3 * a).toFixed(3)})`;
+  }
+  ctx.fillRect(0, 0, layout.width, layout.height);
+}
+
+function drawOverlayPanel(ctx, layout) {
+  ctx.fillStyle = HUD_COLORS.overlay;
+  ctx.fillRect(0, 0, layout.width, layout.height);
+}
+
+/**
+ * Title screen: game name, start prompt and a short control legend.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout Result of {@link computeHudLayout}.
+ */
+export function drawTitleOverlay(ctx, layout) {
+  if (!ctx || !layout) return;
+  drawOverlayPanel(ctx, layout);
+  const cx = layout.width / 2;
+  const top = layout.height / 2 - 56;
+
+  drawLabel(ctx, 'TOP-DOWN SHOOTER', cx, top, { color: HUD_COLORS.ink, font: 34, align: 'center' });
+  drawLabel(ctx, 'Press Enter or Space to start', cx, top + 42, {
+    color: HUD_COLORS.mission,
+    font: 16,
+    align: 'center',
+  });
+  drawLabel(ctx, 'WASD/arrows move · mouse aims · click fires · E vehicle · Space handbrake', cx, top + 74, {
+    color: HUD_COLORS.muted,
+    font: 12,
+    align: 'center',
+  });
+  drawLabel(ctx, 'P pause · M mute · Enter/Space restart', cx, top + 94, {
+    color: HUD_COLORS.muted,
+    font: 12,
+    align: 'center',
+  });
+}
+
+/**
+ * Pause screen.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout Result of {@link computeHudLayout}.
+ */
+export function drawPauseOverlay(ctx, layout) {
+  if (!ctx || !layout) return;
+  drawOverlayPanel(ctx, layout);
+  const cx = layout.width / 2;
+  const cy = layout.height / 2;
+  drawLabel(ctx, 'PAUSED', cx, cy - 12, { color: HUD_COLORS.ink, font: 30, align: 'center' });
+  drawLabel(ctx, 'Press P to resume', cx, cy + 24, {
+    color: HUD_COLORS.muted,
+    font: 14,
+    align: 'center',
+  });
+}
+
+/**
+ * Game-over screen: the terminal outcome, the run's score and a restart prompt.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout Result of {@link computeHudLayout}.
+ * @param {object} [model]
+ * @param {string|null} [model.outcome]
+ * @param {number} [model.score=0]
+ * @param {number} [model.cash=0]
+ * @param {{ score: number, cash: number }|null} [model.best]
+ */
+export function drawGameOverOverlay(ctx, layout, { outcome = null, score = 0, cash = 0, best = null } = {}) {
+  if (!ctx || !layout) return;
+  drawOverlayPanel(ctx, layout);
+  const cx = layout.width / 2;
+  const cy = layout.height / 2;
+
+  drawLabel(ctx, outcomeLabel(outcome) || 'GAME OVER', cx, cy - 44, {
+    color: outcomeColor(outcome),
+    font: 38,
+    align: 'center',
+  });
+  drawLabel(ctx, `Score ${Math.round(score)} · ${formatCash(cash)}`, cx, cy + 2, {
+    color: HUD_COLORS.ink,
+    font: 16,
+    align: 'center',
+  });
+  if (best && (best.cash > 0 || best.score > 0)) {
+    drawLabel(ctx, `BEST ${formatCash(best.cash)} · ${Math.round(best.score)}`, cx, cy + 28, {
+      color: HUD_COLORS.muted,
+      font: 13,
       align: 'center',
     });
   }
+  drawLabel(ctx, 'Press Enter or Space to restart', cx, cy + 66, {
+    color: HUD_COLORS.mission,
+    font: 16,
+    align: 'center',
+  });
+}
 
+/**
+ * Small bottom-centre "muted" badge. Nothing is drawn when sound is on.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {object} layout Result of {@link computeHudLayout}.
+ * @param {boolean} muted
+ */
+export function drawMuteBadge(ctx, layout, muted) {
+  if (!ctx || !layout || !muted) return;
+  drawLabel(ctx, 'MUTED (M)', layout.width / 2, layout.weapon.y - 10, {
+    color: HUD_COLORS.danger,
+    font: 11,
+    align: 'center',
+    baseline: 'bottom',
+  });
+}
+
+/** Screen phases the overlay layer understands. */
+export const OVERLAY_PHASES = Object.freeze({
+  TITLE: 'title',
+  PLAYING: 'playing',
+  PAUSED: 'paused',
+  GAMEOVER: 'gameover',
+});
+
+/**
+ * Draw the overlay layer on top of the HUD: the damage vignette, the mute
+ * badge and the title/pause/game-over screens. Kept as one entry point so
+ * `src/main.js` does not need to know the individual pieces.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {{ width: number, height: number }|object} size Logical canvas size, or
+ *   a layout returned by {@link computeHudLayout}.
+ * @param {object} [model]
+ * @param {string} [model.phase=OVERLAY_PHASES.PLAYING]
+ * @param {string|null} [model.outcome]
+ * @param {number} [model.hitFlash=0] Seconds of hit flash left.
+ * @param {boolean} [model.muted=false]
+ * @param {number} [model.score=0]
+ * @param {number} [model.cash=0]
+ * @param {{ score: number, cash: number }|null} [model.best]
+ * @returns {object} The layout that was used.
+ */
+export function renderOverlays(ctx, size, model = {}) {
+  const layout = size && size.health ? size : computeHudLayout(size?.width, size?.height);
+  if (!ctx) return layout;
+
+  const {
+    phase = OVERLAY_PHASES.PLAYING,
+    outcome = null,
+    hitFlash = 0,
+    muted = false,
+    score = 0,
+    cash = 0,
+    best = null,
+  } = model;
+
+  ctx.save();
+  drawHitFlash(ctx, layout, hitFlashAlpha(hitFlash));
+  if (phase === OVERLAY_PHASES.TITLE) drawTitleOverlay(ctx, layout);
+  else if (phase === OVERLAY_PHASES.PAUSED) drawPauseOverlay(ctx, layout);
+  else if (phase === OVERLAY_PHASES.GAMEOVER) {
+    drawGameOverOverlay(ctx, layout, { outcome, score, cash, best });
+  }
+  drawMuteBadge(ctx, layout, muted);
   ctx.restore();
 
   return layout;

@@ -24,6 +24,12 @@ import {
   weaponLabel,
   formatCash,
   computeHudLayout,
+  hitFlashAlpha,
+  outcomeLabel,
+  outcomeColor,
+  renderOverlays,
+  OVERLAY_PHASES,
+  HIT_FLASH_SECONDS,
   HUD_COLORS,
   HUD_DEFAULTS,
 } from '../src/ui/hud.js';
@@ -314,4 +320,99 @@ test('computeHudLayout hides right-hand panels when there is no room', () => {
   const layout = computeHudLayout(150, 540);
   assert.equal(layout.wantedVisible, false);
   assert.equal(layout.cashVisible, false);
+});
+
+function stubContext() {
+  const calls = { fillRect: 0, fillText: 0, strokeRect: 0 };
+  const gradient = { addColorStop() {} };
+  return {
+    calls,
+    save() {},
+    restore() {},
+    beginPath() {},
+    closePath() {},
+    moveTo() {},
+    lineTo() {},
+    arc() {},
+    ellipse() {},
+    fill() {},
+    stroke() {},
+    translate() {},
+    rotate() {},
+    setTransform() {},
+    clearRect() {},
+    fillRect() {
+      calls.fillRect += 1;
+    },
+    strokeRect() {
+      calls.strokeRect += 1;
+    },
+    fillText() {
+      calls.fillText += 1;
+    },
+    measureText() {
+      return { width: 42 };
+    },
+    createRadialGradient() {
+      return gradient;
+    },
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+  };
+}
+
+test('renderOverlays draws every phase on a canvas context', () => {
+  for (const phase of Object.values(OVERLAY_PHASES)) {
+    const ctx = stubContext();
+    const layout = renderOverlays(
+      ctx,
+      { width: 960, height: 540 },
+      {
+        phase,
+        outcome: 'wasted',
+        hitFlash: 0.5,
+        muted: true,
+        score: 120,
+        cash: 80,
+        best: { score: 200, cash: 400 },
+      },
+    );
+    assert.equal(layout.width, 960, phase);
+    assert.equal(layout.height, 540, phase);
+    assert.ok(ctx.calls.fillRect > 0, `${phase} filled the overlay panel`);
+    assert.ok(ctx.calls.fillText > 0, `${phase} drew text`);
+  }
+});
+
+test('renderOverlays tolerates a missing context', () => {
+  const layout = renderOverlays(null, { width: 320, height: 240 }, { phase: 'title' });
+  assert.equal(layout.width, 320);
+});
+
+test('hitFlashAlpha fades from one to zero over the flash window', () => {
+  assert.equal(hitFlashAlpha(HIT_FLASH_SECONDS), 1);
+  assert.equal(hitFlashAlpha(HIT_FLASH_SECONDS / 2), 0.5);
+  assert.equal(hitFlashAlpha(0), 0);
+  assert.equal(hitFlashAlpha(-1), 0);
+  assert.equal(hitFlashAlpha(Number.NaN), 0);
+  assert.equal(hitFlashAlpha(10, HIT_FLASH_SECONDS), 1, 'clamped to one');
+  assert.equal(hitFlashAlpha(1, 2), 0.5, 'honours an explicit duration');
+  assert.equal(hitFlashAlpha(1, 0), 1, 'falls back to the default duration');
+});
+
+test('the overlay phase vocabulary and outcome labels are exposed', () => {
+  assert.deepEqual(
+    Object.values(OVERLAY_PHASES).sort(),
+    ['gameover', 'paused', 'playing', 'title'],
+  );
+  assert.equal(outcomeLabel('wasted'), 'WASTED');
+  assert.equal(outcomeLabel('won'), 'YOU WIN');
+  assert.equal(outcomeLabel(null), '');
+  assert.equal(outcomeColor('busted'), HUD_COLORS.outcomeLose);
+  assert.equal(outcomeColor('won'), HUD_COLORS.outcomeWin);
+  assert.equal(HUD_COLORS.flash, '#ef4444');
 });

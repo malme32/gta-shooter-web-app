@@ -20,18 +20,32 @@
  * only exercise `src/core/`.
  */
 
-import { createGame, setViewport, restart, computeScore } from './core/game.js';
+import { createGame, setViewport, restart, computeScore, drainEvents } from './core/game.js';
 import { createMap } from './core/map.js';
-import { createInput } from './ui/input.js';
-import { resolveStorage, readBest, recordBest } from './ui/storage.js';
+import { createInput, takeConfirm } from './ui/input.js';
+import { createAudio } from './ui/audio.js';
+import { resolveStorage, readBest, recordBest, readMuted, writeMuted } from './ui/storage.js';
 import {
   clearCanvas,
   renderWorld,
   sampleFrame,
   snapshotScene,
 } from './ui/render.js';
-import { renderHud, weaponLabel } from './ui/hud.js';
+import {
+  renderHud,
+  renderOverlays,
+  weaponLabel,
+  HIT_FLASH_SECONDS,
+  OVERLAY_PHASES,
+} from './ui/hud.js';
 import { missionLabel } from './core/mission.js';
+
+/**
+ * Seconds the game-over screen ignores a confirm after it appears. A trigger or
+ * key held at the moment of death must not dismiss the overlay before the
+ * player has seen it.
+ */
+export const GAME_OVER_CONFIRM_LOCKOUT_SECONDS = 0.4;
 
 /**
  * Last CSS size seen from `getBoundingClientRect()`.
@@ -108,13 +122,33 @@ function bootstrap() {
 
   const storage = resolveStorage();
   game.best = readBest(storage);
+  const audio = createAudio({ muted: readMuted(storage) });
   let runRecorded = false;
+
+  // The run starts on the title screen with the simulation frozen, so the
+  // world is already drawn behind the overlay. `phase` owns the presentation
+  // (title/pause/game-over); `game.paused` freezes the core simulation.
+  let phase = OVERLAY_PHASES.TITLE;
+  game.paused = true;
+  let hitFlash = 0;
+  let prevKeys = { pause: false, mute: false };
+  // Short grace period so a trigger already held at the moment of death cannot
+  // dismiss the game-over screen before the player has seen it.
+  let gameOverLockout = 0;
 
   const status = document.getElementById('status');
   if (status) {
     status.textContent =
-      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving, Enter restarts after a mission. Complete objectives, grab pickups, and avoid the police.';
+      'Title screen — press Enter or Space to start. WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving. P pauses, M mutes, Enter/Space restarts after the run.';
   }
+
+  // Browsers only allow audio to start from a real user gesture; unlock on the
+  // first pointer or key event, whichever comes first.
+  const unlockAudio = () => {
+    audio.unlock();
+  };
+  window.addEventListener('pointerdown', unlockAudio);
+  window.addEventListener('keydown', unlockAudio);
 
   let dpr = syncCanvasSize(canvas, ctx, game);
   let prevSnapshot = snapshotScene(game);
@@ -122,14 +156,86 @@ function bootstrap() {
   let last = performance.now();
   let frameCount = 0;
 
+  /**
+   * Consume the edge-triggered pause/mute keys so a held key fires once. The
+   * confirm gesture is handled separately by {@link takeConfirm}, which owns the
+   * one-shot semantics.
+   *
+   * @returns {{ pause: boolean, mute: boolean }}
+   */
+  function readEdgeKeys() {
+    const pause = Boolean(game.input.pause);
+    const mute = Boolean(game.input.mute);
+    const edges = {
+      pause: pause && !prevKeys.pause,
+      mute: mute && !prevKeys.mute,
+    };
+    prevKeys = { pause, mute };
+    return edges;
+  }
+
   function frame(now) {
     const dt = (now - last) / 1000;
     last = now;
     frameCount += 1;
 
     dpr = syncCanvasSize(canvas, ctx, game);
+
+    const keys = readEdgeKeys();
+    // `confirm` is a fresh Space/Enter press, consumed once. The lockout keeps
+    // the game-over overlay visible even if a key or the trigger is still down.
+    const confirm = takeConfirm(game.input, {
+      lockout: phase === OVERLAY_PHASES.GAMEOVER ? gameOverLockout : 0,
+    });
+
+    if (keys.mute) {
+      const muted = audio.toggleMute();
+      writeMuted(storage, muted);
+      // Only confirm an unmute; muting stays silent by definition.
+      if (!muted) audio.playCue('uiUnmute');
+    }
+
+    if (confirm) {
+      if (phase === OVERLAY_PHASES.TITLE) {
+        audio.unlock();
+        audio.playCue('uiStart');
+        game.paused = false;
+        phase = OVERLAY_PHASES.PLAYING;
+      } else if (phase === OVERLAY_PHASES.GAMEOVER) {
+        audio.unlock();
+        restart(game);
+        audio.playCue('uiStart');
+        runRecorded = false;
+        hitFlash = 0;
+        gameOverLockout = 0;
+        phase = OVERLAY_PHASES.PLAYING;
+      }
+    }
+
+    if (keys.pause) {
+      if (phase === OVERLAY_PHASES.PLAYING) {
+        game.paused = true;
+        phase = OVERLAY_PHASES.PAUSED;
+        audio.playCue('uiPause');
+      } else if (phase === OVERLAY_PHASES.PAUSED) {
+        game.paused = false;
+        phase = OVERLAY_PHASES.PLAYING;
+        audio.playCue('uiResume');
+      }
+    }
+
     const sample = sampleFrame(game, dt, prevSnapshot);
     prevSnapshot = sample.prevSnapshot;
+
+    // Audio and the damage vignette are both driven by the tick's event queue.
+    for (const event of drainEvents(game)) {
+      audio.play(event);
+      if (event.type === 'hit' && event.targetId === game.player.id) {
+        hitFlash = HIT_FLASH_SECONDS;
+      }
+    }
+    if (hitFlash > 0) hitFlash = Math.max(0, hitFlash - dt);
+    if (gameOverLockout > 0) gameOverLockout = Math.max(0, gameOverLockout - dt);
 
     if (game.gameOver) {
       if (!runRecorded) {
@@ -137,9 +243,9 @@ function bootstrap() {
         game.best = result.best;
         runRecorded = true;
       }
-      if (game.input.restart) {
-        restart(game);
-        runRecorded = false;
+      if (phase === OVERLAY_PHASES.PLAYING) {
+        phase = OVERLAY_PHASES.GAMEOVER;
+        gameOverLockout = GAME_OVER_CONFIRM_LOCKOUT_SECONDS;
       }
     }
 
@@ -154,13 +260,26 @@ function bootstrap() {
       player: driving ? null : scene.player,
       entities: scene.entities,
     });
-    renderHud(ctx, game, { width, height });
+    if (phase !== OVERLAY_PHASES.TITLE) {
+      renderHud(ctx, game, { width, height });
+    }
+    renderOverlays(ctx, { width, height }, {
+      phase,
+      outcome: game.outcome,
+      hitFlash,
+      muted: audio.isMuted(),
+      score: computeScore(game),
+      cash: game.cash,
+      best: game.best,
+    });
 
     if (status && frameCount % 30 === 0) {
       const p = game.player;
       const mission = game.mission ? missionLabel(game.mission) : 'no mission';
       const outcome = game.outcome ? ` · ${game.outcome}` : '';
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted}${game.sirenActive ? ' (siren)' : ''} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve} · threats ${game.enemies.length} · $${game.cash} · ${mission}${outcome} · best $${game.best?.cash ?? 0}`;
+      const muted = audio.isMuted() ? ' · muted' : '';
+      const paused = game.paused && phase === OVERLAY_PHASES.PAUSED ? ' · paused' : '';
+      status.textContent = `${phase} · tick ${game.tick}${paused} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted}${game.sirenActive ? ' (siren)' : ''} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve} · threats ${game.enemies.length} · $${game.cash} · ${mission}${outcome}${muted} · best $${game.best?.cash ?? 0}`;
     }
 
     requestAnimationFrame(frame);
@@ -176,6 +295,8 @@ function bootstrap() {
   window.addEventListener('beforeunload', () => {
     input.dispose();
     window.removeEventListener('resize', onResize);
+    window.removeEventListener('pointerdown', unlockAudio);
+    window.removeEventListener('keydown', unlockAudio);
   });
   requestAnimationFrame(frame);
 }
