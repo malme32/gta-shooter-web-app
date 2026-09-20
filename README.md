@@ -129,7 +129,9 @@ velocity.
   so a stationary car cannot pivot and reverse mirrors the steering. The
   handbrake brakes hard (1200 px/s^2) and multiplies steering for a drift feel.
 - Top speed 320 px/s forward, 140 px/s reverse; hitting a building scrubs 75% of
-  the speed. `E` enters the nearest vehicle within 64 px and exits to a spot
+  the speed. `E` enters the nearest unoccupied vehicle whose hull is within 64 px
+  of the player's centre (64 px from the player centre to the vehicle edge, i.e.
+  up to 64 px plus the vehicle radius centre-to-centre) and exits to a spot
   where the player circle fits (exiting is blocked rather than placing the player
   in a wall).
 - Run-over damage applies once per contact to entities the car touches at
