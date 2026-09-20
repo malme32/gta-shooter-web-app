@@ -22,9 +22,9 @@
 
 import { createGame, setViewport, restart, computeScore, drainEvents } from './core/game.js';
 import { createMap } from './core/map.js';
-import { createInput } from './ui/input.js';
+import { createInput, takeConfirm } from './ui/input.js';
 import { createAudio } from './ui/audio.js';
-import { resolveStorage, readBest, recordBest } from './ui/storage.js';
+import { resolveStorage, readBest, recordBest, readMuted, writeMuted } from './ui/storage.js';
 import {
   clearCanvas,
   renderWorld,
@@ -39,6 +39,13 @@ import {
   OVERLAY_PHASES,
 } from './ui/hud.js';
 import { missionLabel } from './core/mission.js';
+
+/**
+ * Seconds the game-over screen ignores a confirm after it appears. A trigger or
+ * key held at the moment of death must not dismiss the overlay before the
+ * player has seen it.
+ */
+export const GAME_OVER_CONFIRM_LOCKOUT_SECONDS = 0.4;
 
 /**
  * Last CSS size seen from `getBoundingClientRect()`.
@@ -115,7 +122,7 @@ function bootstrap() {
 
   const storage = resolveStorage();
   game.best = readBest(storage);
-  const audio = createAudio();
+  const audio = createAudio({ muted: readMuted(storage) });
   let runRecorded = false;
 
   // The run starts on the title screen with the simulation frozen, so the
@@ -124,7 +131,10 @@ function bootstrap() {
   let phase = OVERLAY_PHASES.TITLE;
   game.paused = true;
   let hitFlash = 0;
-  let prevKeys = { pause: false, mute: false, confirm: false };
+  let prevKeys = { pause: false, mute: false };
+  // Short grace period so a trigger already held at the moment of death cannot
+  // dismiss the game-over screen before the player has seen it.
+  let gameOverLockout = 0;
 
   const status = document.getElementById('status');
   if (status) {
@@ -147,24 +157,20 @@ function bootstrap() {
   let frameCount = 0;
 
   /**
-   * Consume edge-triggered keys (pause/mute/confirm) so a held key fires once.
-   * `Space` doubles as confirm on the title and game-over screens, where firing
-   * is meaningless.
+   * Consume the edge-triggered pause/mute keys so a held key fires once. The
+   * confirm gesture is handled separately by {@link takeConfirm}, which owns the
+   * one-shot semantics.
    *
-   * @param {string} currentPhase
-   * @returns {{ confirm: boolean, pause: boolean, mute: boolean }}
+   * @returns {{ pause: boolean, mute: boolean }}
    */
-  function readEdgeKeys(currentPhase) {
-    const confirm = Boolean(game.input.restart)
-      || (currentPhase !== OVERLAY_PHASES.PLAYING && Boolean(game.input.fire));
+  function readEdgeKeys() {
     const pause = Boolean(game.input.pause);
     const mute = Boolean(game.input.mute);
     const edges = {
-      confirm: confirm && !prevKeys.confirm,
       pause: pause && !prevKeys.pause,
       mute: mute && !prevKeys.mute,
     };
-    prevKeys = { pause, mute, confirm };
+    prevKeys = { pause, mute };
     return edges;
   }
 
@@ -175,15 +181,21 @@ function bootstrap() {
 
     dpr = syncCanvasSize(canvas, ctx, game);
 
-    const keys = readEdgeKeys(phase);
+    const keys = readEdgeKeys();
+    // `confirm` is a fresh Space/Enter press, consumed once. The lockout keeps
+    // the game-over overlay visible even if a key or the trigger is still down.
+    const confirm = takeConfirm(game.input, {
+      lockout: phase === OVERLAY_PHASES.GAMEOVER ? gameOverLockout : 0,
+    });
 
     if (keys.mute) {
       const muted = audio.toggleMute();
+      writeMuted(storage, muted);
       // Only confirm an unmute; muting stays silent by definition.
-      if (!muted) audio.playCue('uiMute');
+      if (!muted) audio.playCue('uiUnmute');
     }
 
-    if (keys.confirm) {
+    if (confirm) {
       if (phase === OVERLAY_PHASES.TITLE) {
         audio.unlock();
         audio.playCue('uiStart');
@@ -195,6 +207,7 @@ function bootstrap() {
         audio.playCue('uiStart');
         runRecorded = false;
         hitFlash = 0;
+        gameOverLockout = 0;
         phase = OVERLAY_PHASES.PLAYING;
       }
     }
@@ -222,6 +235,7 @@ function bootstrap() {
       }
     }
     if (hitFlash > 0) hitFlash = Math.max(0, hitFlash - dt);
+    if (gameOverLockout > 0) gameOverLockout = Math.max(0, gameOverLockout - dt);
 
     if (game.gameOver) {
       if (!runRecorded) {
@@ -229,7 +243,10 @@ function bootstrap() {
         game.best = result.best;
         runRecorded = true;
       }
-      if (phase === OVERLAY_PHASES.PLAYING) phase = OVERLAY_PHASES.GAMEOVER;
+      if (phase === OVERLAY_PHASES.PLAYING) {
+        phase = OVERLAY_PHASES.GAMEOVER;
+        gameOverLockout = GAME_OVER_CONFIRM_LOCKOUT_SECONDS;
+      }
     }
 
     const { width, height } = game.viewport;

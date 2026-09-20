@@ -17,8 +17,10 @@
 
 /**
  * Every event type the core emits, so the mapping can be checked exhaustively.
- * `tracer` and `enemy_lost_player` are intentionally silent (see
- * {@link SILENT_EVENTS}).
+ *
+ * `test/audio.test.js` verifies this list against the literal type strings at
+ * the core's `emitEvent(...)` call sites, so an event added to the core fails
+ * until it is registered here (and given a cue or declared silent).
  *
  * @type {ReadonlyArray<string>}
  */
@@ -83,7 +85,8 @@ export const CUES = Object.freeze({
   uiStart: Object.freeze({ wave: 'sine', from: 523, to: 1046, duration: 0.2, gain: 0.15 }),
   uiPause: Object.freeze({ wave: 'sine', from: 440, to: 330, duration: 0.12, gain: 0.12 }),
   uiResume: Object.freeze({ wave: 'sine', from: 440, to: 660, duration: 0.12, gain: 0.12 }),
-  uiMute: Object.freeze({ wave: 'sine', from: 330, to: 440, duration: 0.1, gain: 0.12 }),
+  // Only audible on unmute: muting by definition plays nothing.
+  uiUnmute: Object.freeze({ wave: 'sine', from: 330, to: 440, duration: 0.1, gain: 0.12 }),
 });
 
 /**
@@ -103,7 +106,9 @@ export const EVENT_CUES = Object.freeze({
   enemy_death: 'death',
   loot_drop: 'loot',
   pickup: 'pickup',
-  player_death: 'wasted',
+  // `player_death` and `wasted` fire on the same tick and share the `wasted`
+  // cue; keeping one silent avoids scheduling two identical oscillators.
+  player_death: null,
   wasted: 'wasted',
   mission_complete: 'missionComplete',
   police_despawn: 'sirenOff',
@@ -120,7 +125,7 @@ export const EVENT_CUES = Object.freeze({
 });
 
 /** Events that deliberately make no sound. */
-export const SILENT_EVENTS = Object.freeze(['tracer', 'enemy_lost_player']);
+export const SILENT_EVENTS = Object.freeze(['tracer', 'enemy_lost_player', 'player_death']);
 
 /**
  * Map a game event to the cue it should play.
@@ -234,6 +239,30 @@ export function createAudio({ context = null, muted = false } = {}) {
     return ctx;
   }
 
+  /**
+   * Play a cue id directly (used for UI sounds). A closure rather than a method
+   * so it can be passed around as a callback without losing its receiver.
+   *
+   * @param {string|null} id
+   * @returns {string|null}
+   */
+  function playCue(id) {
+    if (isMutedFlag || !isCue(id)) return null;
+    const context2 = ensureContext();
+    if (!context2) return null;
+    return playCueOn(context2, id) ? id : null;
+  }
+
+  /**
+   * Play the cue for a game event.
+   *
+   * @param {object|string} event
+   * @returns {string|null}
+   */
+  function play(event) {
+    return playCue(cueFor(event));
+  }
+
   return {
     /**
      * Create/resume the audio context from a user gesture.
@@ -252,26 +281,8 @@ export function createAudio({ context = null, muted = false } = {}) {
       return true;
     },
 
-    /**
-     * Play the cue for a game event.
-     * @param {object|string} event
-     * @returns {string|null}
-     */
-    play(event) {
-      return this.playCue(cueFor(event));
-    },
-
-    /**
-     * Play a cue id directly (used for UI sounds).
-     * @param {string|null} id
-     * @returns {string|null}
-     */
-    playCue(id) {
-      if (isMutedFlag || !isCue(id)) return null;
-      const context2 = ensureContext();
-      if (!context2) return null;
-      return playCueOn(context2, id) ? id : null;
-    },
+    play,
+    playCue,
 
     /**
      * Mute or unmute every future cue.

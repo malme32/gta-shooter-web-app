@@ -20,7 +20,10 @@ import {
   writeBest,
   recordBest,
   normaliseRecord,
+  readMuted,
+  writeMuted,
   BEST_RECORD_KEY,
+  MUTED_KEY,
 } from '../src/ui/storage.js';
 
 function makeMap(width, height, spawns = {}) {
@@ -270,4 +273,33 @@ test('normaliseRecord floors amounts and rejects bad input', () => {
   assert.deepEqual(normaliseRecord({ score: -5, cash: 2.9 }), { score: 0, cash: 2 });
   assert.deepEqual(normaliseRecord({ score: Number.NaN, cash: 'x' }), { score: 0, cash: 0 });
   assert.deepEqual(normaliseRecord(undefined), { score: 0, cash: 0 });
+});
+
+test('the mute preference round-trips and defaults to sound on', () => {
+  const store = createMemoryStorage();
+  assert.equal(readMuted(store), false, 'nothing stored means sound on');
+  assert.equal(store.getItem(MUTED_KEY), null);
+
+  assert.equal(writeMuted(store, true), true);
+  assert.equal(readMuted(store), true, 'mute survives a "reload"');
+
+  assert.equal(writeMuted(store, false), true);
+  assert.equal(readMuted(store), false);
+});
+
+test('corrupt or unavailable storage keeps the game audible without throwing', () => {
+  const corrupt = createMemoryStorage();
+  corrupt.setItem(MUTED_KEY, 'yes please');
+  assert.equal(readMuted(corrupt), false);
+
+  const throwing = {
+    getItem() {
+      throw new Error('storage disabled');
+    },
+    setItem() {
+      throw new Error('storage disabled');
+    },
+  };
+  assert.equal(readMuted(throwing), false);
+  assert.equal(writeMuted(throwing, true), false);
 });

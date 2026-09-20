@@ -95,11 +95,14 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
   an in-memory fallback, and the HUD shows the objective, outcome and best run.
 - T11 (this task): `src/ui/audio.js` - procedural Web Audio cues (oscillator +
   gain envelopes, **no audio files**) with a pure `cueFor(event)` mapping every
-  game event to a cue; audio unlocks on the first pointer/key gesture and `M`
-  mutes. `P` pauses (the simulation freezes and resumes without a time jump),
-  and a title screen / game-over overlay make the run reachable and restartable
-  with `Enter` or `Space`. HUD polish adds a mission prompt pill, a wanted-count
-  label and a red hit-flash vignette.
+  core event to a cue; `test/audio.test.js` checks that vocabulary against the
+  core's actual `emitEvent` sites so it cannot drift. Audio unlocks on the first
+  pointer/key gesture and `M` mutes, with the preference persisted next to the
+  best record. `P` pauses (the simulation freezes and resumes without a time
+  jump), and a title screen / game-over overlay make the run reachable and
+  restartable with a **fresh** `Enter` or `Space` press — a trigger or key still
+  held at the moment of death cannot skip the overlay. HUD polish adds a mission
+  prompt pill, a wanted-count label and a red hit-flash vignette.
 - Nothing is ever committed directly to `main`.
 
 ## Contributing

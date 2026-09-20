@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import {
   CUES,
@@ -64,7 +67,7 @@ test('cueFor maps gameplay events to their cue ids', () => {
   assert.equal(cueFor({ type: 'run_over' }), 'thud');
   assert.equal(cueFor({ type: 'mission_start' }), 'missionStart');
   assert.equal(cueFor({ type: 'mission_complete' }), 'missionComplete');
-  assert.equal(cueFor({ type: 'player_death' }), 'wasted');
+  assert.equal(cueFor({ type: 'player_death' }), null, 'the wasted cue is played once');
   assert.equal(cueFor({ type: 'wasted' }), 'wasted');
   assert.equal(cueFor({ type: 'busted' }), 'busted');
   assert.equal(cueFor({ type: 'police_spawn' }), 'police');
@@ -85,8 +88,40 @@ test('cueFor is silent for visual-only and unknown events', () => {
   assert.equal(cueFor(undefined), null);
 });
 
+/**
+ * Scan the core for its literal `emitEvent(state, 'type', ...)` call sites so
+ * the cue vocabulary cannot silently drift from the events actually emitted.
+ *
+ * @returns {Set<string>}
+ */
+function emittedEventTypes() {
+  const coreDir = fileURLToPath(new URL('../src/core/', import.meta.url));
+  const types = new Set();
+  for (const file of readdirSync(coreDir)) {
+    if (!file.endsWith('.js')) continue;
+    const source = readFileSync(join(coreDir, file), 'utf8');
+    const pattern = /emitEvent\(\s*[A-Za-z_$][\w$]*\s*,\s*'([a-z_]+)'/g;
+    let match = pattern.exec(source);
+    while (match !== null) {
+      types.add(match[1]);
+      match = pattern.exec(source);
+    }
+  }
+  return types;
+}
+
+test('GAME_EVENT_TYPES lists exactly the events the core emits', () => {
+  const emitted = emittedEventTypes();
+  assert.ok(emitted.size > 0, 'the emit-site scan found something');
+  assert.deepEqual(
+    [...GAME_EVENT_TYPES].sort(),
+    [...emitted].sort(),
+    'register every core event in GAME_EVENT_TYPES',
+  );
+});
+
 test('every emitted game event maps to a cue or is documented silent', () => {
-  for (const type of GAME_EVENT_TYPES) {
+  for (const type of emittedEventTypes()) {
     const silent = SILENT_EVENTS.includes(type);
     const mapped = cueFor({ type, active: true }) !== null;
     assert.equal(mapped, !silent, `${type} should be ${silent ? 'silent' : 'mapped'}`);
@@ -109,7 +144,7 @@ test('every referenced cue exists and is well formed', () => {
     assert.ok(Number.isFinite(cue.duration) && cue.duration > 0, `${id} duration`);
     assert.ok(Number.isFinite(cue.gain) && cue.gain > 0 && cue.gain <= 1, `${id} gain`);
   }
-  assert.ok(isCue('uiStart') && isCue('uiPause') && isCue('uiResume') && isCue('uiMute'));
+  assert.ok(isCue('uiStart') && isCue('uiPause') && isCue('uiResume') && isCue('uiUnmute'));
   assert.equal(isCue('nope'), false);
 });
 
@@ -175,4 +210,14 @@ test('an already-running context does not resume unnecessarily', () => {
 
 test('cue attack time is a small positive fade-in', () => {
   assert.ok(CUE_ATTACK_SECONDS > 0 && CUE_ATTACK_SECONDS < 0.05);
+});
+
+test('play and playCue stay bound when detached from the engine', () => {
+  const context = fakeContext();
+  const audio = createAudio({ context });
+  const { play, playCue } = audio;
+
+  assert.equal(playCue('uiStart'), 'uiStart');
+  assert.equal(play({ type: 'muzzle' }), 'shot');
+  assert.equal(context.started.length, 2);
 });
