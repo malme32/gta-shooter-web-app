@@ -71,6 +71,14 @@ export const WANTED_CRIMES = Object.freeze({
 /** The star level that triggers the terminal "busted" state. */
 export const BUSTED_LEVEL = WANTED_MAX_STARS;
 
+/**
+ * How close (in pixels, added to both entities' radii) a police responder must
+ * be to arrest the player. At {@link BUSTED_LEVEL} a responding officer within
+ * this range busts the player — reaching five stars alone merely starts the
+ * chase.
+ */
+export const POLICE_CAPTURE_RANGE = 26;
+
 /** Ticks without a crime before points start to decay. */
 export const WANTED_DECAY_COOLDOWN_TICKS = 300;
 
@@ -293,6 +301,34 @@ export function policeSpawnPoint(map, x, y, {
  */
 export function isBusted(level) {
   return (Number.isFinite(level) ? level : 0) >= BUSTED_LEVEL;
+}
+
+/**
+ * Find a police responder that has the player cornered: one whose centre is
+ * within {@link POLICE_CAPTURE_RANGE} plus both radii. Returns the officer so
+ * the caller can report who made the arrest, or `null` when nobody is close
+ * enough — reaching the top wanted level alone does not end the run.
+ *
+ * @param {{ x: number, y: number, radius?: number }|null} player
+ * @param {Array<object>|null} enemies Candidate police responders.
+ * @param {object} [options]
+ * @param {number} [options.range=POLICE_CAPTURE_RANGE]
+ * @returns {object|null}
+ */
+export function findCapturingOfficer(player, enemies, { range = POLICE_CAPTURE_RANGE } = {}) {
+  if (!player || !Array.isArray(enemies)) return null;
+  const reach = Number.isFinite(range) && range >= 0 ? range : POLICE_CAPTURE_RANGE;
+  const playerRadius = Number.isFinite(player.radius) ? player.radius : 0;
+
+  for (const officer of enemies) {
+    if (!officer || officer.alive === false || officer.police !== true) continue;
+    const officerRadius = Number.isFinite(officer.radius) ? officer.radius : 0;
+    const limit = reach + playerRadius + officerRadius;
+    const dx = (officer.x ?? 0) - (player.x ?? 0);
+    const dy = (officer.y ?? 0) - (player.y ?? 0);
+    if (dx * dx + dy * dy <= limit * limit) return officer;
+  }
+  return null;
 }
 
 /**

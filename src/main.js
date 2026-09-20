@@ -20,9 +20,10 @@
  * only exercise `src/core/`.
  */
 
-import { createGame, setViewport } from './core/game.js';
+import { createGame, setViewport, restart, computeScore } from './core/game.js';
 import { createMap } from './core/map.js';
 import { createInput } from './ui/input.js';
+import { resolveStorage, readBest, recordBest } from './ui/storage.js';
 import {
   clearCanvas,
   renderWorld,
@@ -30,6 +31,7 @@ import {
   snapshotScene,
 } from './ui/render.js';
 import { renderHud, weaponLabel } from './ui/hud.js';
+import { missionLabel } from './core/mission.js';
 
 /**
  * Last CSS size seen from `getBoundingClientRect()`.
@@ -104,10 +106,14 @@ function bootstrap() {
   const input = createInput({ intent: game.input, canvas, target: window });
   if (canvas.style) canvas.style.cursor = 'crosshair';
 
+  const storage = resolveStorage();
+  game.best = readBest(storage);
+  let runRecorded = false;
+
   const status = document.getElementById('status');
   if (status) {
     status.textContent =
-      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving. Hostiles patrol the streets; crimes draw escalating police attention.';
+      'City online — WASD/arrows move, Shift sprints, mouse aims, click fires, R reloads, 1/2/3 or wheel switch weapons, E enters/exits a vehicle, Space handbrakes while driving, Enter restarts after a mission. Complete objectives, grab pickups, and avoid the police.';
   }
 
   let dpr = syncCanvasSize(canvas, ctx, game);
@@ -125,6 +131,18 @@ function bootstrap() {
     const sample = sampleFrame(game, dt, prevSnapshot);
     prevSnapshot = sample.prevSnapshot;
 
+    if (game.gameOver) {
+      if (!runRecorded) {
+        const result = recordBest(storage, { score: computeScore(game), cash: game.cash });
+        game.best = result.best;
+        runRecorded = true;
+      }
+      if (game.input.restart) {
+        restart(game);
+        runRecorded = false;
+      }
+    }
+
     const { width, height } = game.viewport;
     const scene = sample.scene;
 
@@ -140,7 +158,9 @@ function bootstrap() {
 
     if (status && frameCount % 30 === 0) {
       const p = game.player;
-      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted}${game.sirenActive ? ' (siren)' : ''} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve} · threats ${game.enemies.length} · $${game.cash}`;
+      const mission = game.mission ? missionLabel(game.mission) : 'no mission';
+      const outcome = game.outcome ? ` · ${game.outcome}` : '';
+      status.textContent = `tick ${game.tick} · hp ${Math.round(p.health)} · ap ${Math.round(p.armour)} · wanted ${game.wanted}${game.sirenActive ? ' (siren)' : ''} · ${weaponLabel(p.weapon)} ${p.ammo}/${p.reserve} · threats ${game.enemies.length} · $${game.cash} · ${mission}${outcome} · best $${game.best?.cash ?? 0}`;
     }
 
     requestAnimationFrame(frame);

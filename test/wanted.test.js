@@ -35,7 +35,7 @@ import {
 } from '../src/core/game.js';
 import { createRng } from '../src/core/rng.js';
 import { createMap, canStandAt } from '../src/core/map.js';
-import { POLICE_TYPE_IDS, isPolice } from '../src/core/enemy.js';
+import { POLICE_TYPE_IDS, isPolice, createEnemy } from '../src/core/enemy.js';
 import { spriteFor, snapshotScene, ENTITY_SPRITES } from '../src/ui/render.js';
 import { sirenBlink, sirenActive, SIREN_BLINK_TICKS } from '../src/ui/hud.js';
 
@@ -221,20 +221,29 @@ test('higher wanted levels summon tougher police', () => {
   assert.ok(labelsAreEscalating(types), `expected escalating types, got ${types}`);
 });
 
-test('reaching five stars is a terminal busted state', () => {
+test('reaching five stars starts the chase but only police contact busts you', () => {
   const game = createGame({ map: makeMap(80, 80), seed: 5 });
   addHeat(game, WANTED_MAX_HEAT);
   assert.equal(game.wanted, 5);
 
+  // Five stars on its own is not terminal: no officer is within capture range.
+  update(game);
+  assert.equal(game.busted, false);
+  assert.equal(game.gameOver, false);
+  assert.ok(drainEvents(game).some((event) => event.type === 'siren' && event.active === true));
+
+  // An officer getting close is what ends the run.
+  game.enemies.push(createEnemy({ id: 99, type: 'cop', x: game.player.x + 4, y: game.player.y }));
   update(game);
 
   const events = drainEvents(game);
-  assert.ok(events.some((event) => event.type === 'siren' && event.active === true));
   const busted = events.find((event) => event.type === 'busted');
   assert.ok(busted, 'expected a busted event');
   assert.equal(busted.level, 5);
+  assert.equal(busted.officerId, 99);
   assert.equal(game.busted, true);
   assert.equal(game.gameOver, true);
+  assert.equal(game.outcome, 'busted');
 });
 
 test('siren events track the level and level 0 despawns the police', () => {
