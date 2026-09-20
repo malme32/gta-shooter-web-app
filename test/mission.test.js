@@ -59,6 +59,20 @@ test('createMission clamps bad values and defaults unknown objectives', () => {
   assert.equal(mission.targetType, null);
 });
 
+test('createMission never floors a positive fractional targetCount to zero', () => {
+  for (const targetCount of [0.5, 0.999, 0.1]) {
+    const mission = createMission({ objective: 'eliminate', targetCount, reward: 500 });
+    assert.equal(mission.targetCount, 1, `targetCount ${targetCount} clamps up to 1`);
+    assert.equal(mission.remaining, 1, 'so the mission is not already satisfied');
+
+    activateMission(mission);
+    const result = updateMission(mission);
+    assert.equal(result.completed, false, `targetCount ${targetCount} does not auto-complete`);
+    assert.equal(result.reward, 0, 'and pays no reward with zero kills');
+    assert.equal(mission.kills, 0);
+  }
+});
+
 test('activateMission only moves an inactive mission forward', () => {
   const mission = createMission();
   assert.equal(activateMission(mission), true);
@@ -90,19 +104,21 @@ test('recordElimination ignores police unless they are the target', () => {
   assert.equal(recordElimination(policeTarget, { type: 'swat', police: true }), 0);
 });
 
-test('recordElimination is inert for inactive, complete or reach missions', () => {
+test('recordElimination returns 0 for every non-applicable mission', () => {
+  assert.equal(recordElimination(null, { type: 'thug' }), 0, 'no mission');
+
   const inactive = createMission({ targetCount: 1 });
-  assert.equal(recordElimination(inactive, { type: 'thug' }), 1);
+  assert.equal(recordElimination(inactive, { type: 'thug' }), 0, 'inactive');
 
   const reach = createMission({ objective: 'reach' });
   activateMission(reach);
-  assert.equal(recordElimination(reach, { type: 'thug' }), reach.remaining);
+  assert.equal(recordElimination(reach, { type: 'thug' }), 0, 'wrong objective');
 
   const done = createMission({ targetCount: 1 });
   activateMission(done);
   recordElimination(done, { type: 'thug' });
   completeMission(done);
-  assert.equal(recordElimination(done, { type: 'thug' }), 0);
+  assert.equal(recordElimination(done, { type: 'thug' }), 0, 'already complete');
 });
 
 test('missionObjectiveMet understands both objective types', () => {
@@ -168,6 +184,7 @@ test('missionProgress exposes a flat, HUD-friendly snapshot', () => {
     remaining: 2,
     kills: 1,
     done: false,
+    rewarded: false,
     x: 0,
     y: 0,
     radius: MISSION_REACH_RADIUS,
@@ -176,6 +193,19 @@ test('missionProgress exposes a flat, HUD-friendly snapshot', () => {
   const empty = missionProgress(null);
   assert.equal(empty.id, null);
   assert.equal(empty.done, false);
+  assert.equal(empty.rewarded, false);
+});
+
+test('a completed reach mission reports nothing remaining and a paid reward', () => {
+  const mission = createMission({ objective: 'reach', x: 10, y: 10, reward: 120 });
+  activateMission(mission);
+  completeMission(mission);
+
+  const snapshot = missionProgress(mission);
+  assert.equal(snapshot.done, true);
+  assert.equal(snapshot.remaining, 0, 'no stale eliminate-only remaining');
+  assert.equal(snapshot.kills, 0);
+  assert.equal(snapshot.rewarded, true, 'the paid flag is surfaced');
 });
 
 test('missionLabel describes eliminate and reach objectives', () => {

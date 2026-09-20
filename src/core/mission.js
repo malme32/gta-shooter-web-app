@@ -98,7 +98,7 @@ export function createMission({
   radius = MISSION_REACH_RADIUS,
 } = {}) {
   const resolved = isMissionObjective(objective) ? objective : 'eliminate';
-  const count = Number.isFinite(targetCount) && targetCount > 0 ? Math.floor(targetCount) : 1;
+  const count = Number.isFinite(targetCount) && targetCount > 0 ? Math.max(1, Math.floor(targetCount)) : 1;
   return {
     id,
     name: typeof name === 'string' ? name : '',
@@ -138,7 +138,8 @@ export function isMissionComplete(mission) {
 
 /**
  * Activate a mission. Activating an already-active or complete mission is a
- * no-op, so a restart can safely re-activate the current mission.
+ * no-op: missions are not reusable once complete. Restart is expected to
+ * rebuild a fresh mission (see `core/game.js`), not to re-activate the old one.
  *
  * @param {Mission} mission
  * @returns {boolean} `true` when the mission was inactive and is now active.
@@ -160,11 +161,14 @@ export function activateMission(mission) {
  * @param {object} [kill]
  * @param {string} [kill.type] Archetype id of the killed hostile.
  * @param {boolean} [kill.police=false] Whether the killed hostile was police.
- * @returns {number} Kills still required (unchanged when the kill was ignored).
+ * @returns {number} Kills still required after this call, or `0` whenever the
+ *   kill could not be applied at all (no mission, or a mission that is not an
+ *   active `eliminate`). A kill that is ignored by target filtering leaves the
+ *   count unchanged and returns the current `remaining`.
  */
 export function recordElimination(mission, { type, police = false } = {}) {
   if (!mission || !isMissionActive(mission) || mission.objective !== 'eliminate') {
-    return mission ? mission.remaining : 0;
+    return 0;
   }
   if (mission.targetType) {
     if (type !== mission.targetType) return mission.remaining;
@@ -209,7 +213,9 @@ export function completeMission(mission) {
   if (!mission || mission.status !== MISSION_STATUS.ACTIVE) return { completed: false, reward: 0 };
   mission.status = MISSION_STATUS.COMPLETE;
   mission.rewarded = true;
-  if (mission.remaining < 0) mission.remaining = 0;
+  // Nothing is outstanding once complete, including for `reach` missions whose
+  // eliminate-only `remaining`/`kills` fields would otherwise stay stale.
+  mission.remaining = 0;
   return { completed: true, reward: mission.reward };
 }
 
@@ -236,7 +242,7 @@ export function updateMission(mission, context = {}) {
  * @param {Mission} mission
  * @returns {{ id: (number|string), name: string, objective: string, status: string,
  *   reward: number, targetCount: number, remaining: number, kills: number,
- *   done: boolean, x: number, y: number, radius: number }}
+ *   done: boolean, rewarded: boolean, x: number, y: number, radius: number }}
  */
 export function missionProgress(mission) {
   if (!mission) {
@@ -250,6 +256,7 @@ export function missionProgress(mission) {
       remaining: 0,
       kills: 0,
       done: false,
+      rewarded: false,
       x: 0,
       y: 0,
       radius: MISSION_REACH_RADIUS,
@@ -265,6 +272,7 @@ export function missionProgress(mission) {
     remaining: mission.remaining,
     kills: mission.kills,
     done: mission.status === MISSION_STATUS.COMPLETE,
+    rewarded: mission.rewarded,
     x: mission.x,
     y: mission.y,
     radius: mission.radius,
