@@ -41,8 +41,10 @@ npm test
 ```
 
 The suite must exit 0. It covers the pure core and the pure helpers in
-`src/ui/`; the `draw*` functions are not unit tested because they need a real
-canvas.
+`src/ui/`, including the overlay renderers (`renderOverlays`, which calls the
+title/pause/game-over/mute draws) against a stubbed 2D context. The world
+renderers (`drawMap`, `drawEntity`, `drawPlayer`, `renderWorld`, `renderHud`)
+are not unit tested because they need a real canvas.
 
 ## Controls
 
@@ -67,7 +69,8 @@ remembered). The run opens on a title screen and shows a game-over overlay on a
 terminal outcome; both are dismissed only by a **fresh** `Enter` or `Space`
 press, so a trigger or key still held at the moment of death cannot skip the
 overlay. Browser default behaviour is suppressed for every mapped key (WASD,
-arrows, `Space`, `Enter`, `R`, `1`/`2`/`3`, `E`, `Shift`, `P`, `M`).
+arrows, `Space`, `Enter`/`NumpadEnter`, `R`, `1`/`2`/`3` and their numpad
+equivalents, `E`, `Shift`, `P`, `M`).
 
 ## Gameplay rules
 
