@@ -38,6 +38,8 @@ export const KEY_ACTIONS = Object.freeze({
   Digit3: 'weapon3',
   Numpad3: 'weapon3',
   KeyE: 'enter',
+  KeyM: 'mute',
+  KeyP: 'pause',
   Enter: 'restart',
   NumpadEnter: 'restart',
 });
@@ -65,7 +67,10 @@ export const DERIVED_KEYS = Object.freeze({
  * @property {boolean} weapon3
  * @property {number} cycleWeapon Accumulated wheel steps (negative = up).
  * @property {boolean} enter One-shot: enter/exit the nearest vehicle (key `E`).
- * @property {boolean} restart One-shot: restart the run after a terminal state (key `Enter`).
+ * @property {boolean} restart One-shot: confirm/restart (key `Enter`; `Space`
+ *   also confirms on the title and game-over screens).
+ * @property {boolean} pause One-shot: toggle pause (key `P`).
+ * @property {boolean} mute One-shot: toggle mute (key `M`).
  * @property {boolean} handbrake Held while `Space` is down (handbrake while driving).
  * @property {number|null} pointerX Canvas-space pointer x, or `null` when unknown.
  * @property {number|null} pointerY Canvas-space pointer y, or `null` when unknown.
@@ -91,6 +96,8 @@ export function createIntent() {
     cycleWeapon: 0,
     enter: false,
     restart: false,
+    pause: false,
+    mute: false,
     handbrake: false,
     pointerX: null,
     pointerY: null,

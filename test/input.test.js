@@ -63,6 +63,10 @@ test('actionForKey maps WASD, the arrows and modifiers', () => {
   assert.equal(actionForKey('ShiftRight'), 'sprint');
   assert.equal(actionForKey('Space'), 'fire');
   assert.equal(actionForKey('KeyR'), 'reload');
+  assert.equal(actionForKey('KeyE'), 'enter');
+  assert.equal(actionForKey('KeyP'), 'pause');
+  assert.equal(actionForKey('KeyM'), 'mute');
+  assert.equal(actionForKey('Enter'), 'restart');
   assert.equal(actionForKey('KeyZ'), null);
 });
 

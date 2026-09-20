@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   createGame,
   update,
+  advance,
   restart,
   drainEvents,
   addHeat,
@@ -11,6 +12,7 @@ import {
   GAME_OUTCOMES,
   SCORE_PER_KILL,
 } from '../src/core/game.js';
+import { TICK_SECONDS } from '../src/core/constants.js';
 import { createEnemy, killEnemy } from '../src/core/enemy.js';
 import {
   createMemoryStorage,
@@ -198,6 +200,24 @@ test('restart resets the world, wanted level, cash and campaign', () => {
   assert.equal(game.pickups.length, map.spawns.pickupSpawns.length, 'map pickups are restored');
   assert.equal(game.mission.id, 'm1');
   assert.equal(game.mission.status, 'active');
+});
+
+test('pausing freezes the simulation and resuming does not jump time', () => {
+  const game = createGame({ map: makeMap(80, 80), spawn: { x: 400, y: 400 }, seed: 1 });
+  game.input.up = true;
+
+  update(game);
+  const before = { x: game.player.x, y: game.player.y };
+
+  game.paused = true;
+  advance(game, 1);
+  assert.deepEqual({ x: game.player.x, y: game.player.y }, before, 'player is frozen while paused');
+  assert.ok(game.tick > 0, 'ticks still advance so time is well defined');
+  assert.ok(game.accumulator < TICK_SECONDS, 'the accumulator cannot build a backlog while paused');
+
+  game.paused = false;
+  update(game);
+  assert.ok(game.player.y < before.y, 'the player moves again after resuming');
 });
 
 test('computeScore combines cash and kills', () => {

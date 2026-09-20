@@ -4,8 +4,8 @@ A dependency-free top-down shooter web game built with plain HTML, CSS,
 ECMAScript 2020 modules and the Canvas 2D API. There is no build step and no
 third-party runtime dependency.
 
-This repository is currently at **T10: missions, pickups, win/lose/busted and
-restart**. It contains the project skeleton and the pure simulation core (constants, geometry,
+This repository is currently at **T11: audio, pause/mute and title/game-over
+polish**. It contains the project skeleton and the pure simulation core (constants, geometry,
 seeded rng, the fixed-timestep loop, the city map with collision and clamping,
 the player entity with a dead-zone camera follow), keyboard/mouse input in
 `src/ui/input.js`, the camera-transform renderer and HUD in `src/ui/render.js`
@@ -13,8 +13,9 @@ and `src/ui/hud.js`, the weapon/projectile systems in `src/core/weapons.js` and
 `src/core/bullet.js`, the vehicle system in `src/core/vehicle.js`, the enemy
 archetypes and AI in `src/core/enemy.js` and `src/core/ai.js`, and the wanted
   system with escalating police in `src/core/wanted.js`, the mission state
-  machine in `src/core/mission.js` and the pickup collection rules in
-  `src/core/pickup.js`. Audio hooks in a later task.
+  machine in `src/core/mission.js`, the pickup collection rules in
+  `src/core/pickup.js`, and the procedural Web Audio cues in
+  `src/ui/audio.js`.
 
 ## Run
 
@@ -84,7 +85,7 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
   `src/core/enemy.js` spawn by star level (more and tougher as it rises), level 0
   despawns them, and a `siren` event is emitted on level changes. The HUD shows
   the wanted stars and a blinking siren.
-- T10 (this task): `src/core/mission.js` - an `eliminate`/`reach` objective
+- T10: `src/core/mission.js` - an `eliminate`/`reach` objective
   state machine with a cash reward; `src/core/pickup.js` - health/armour/ammo/cash
   collection, used for both map pickups and enemy loot. Terminal outcomes
   `wasted`, `busted`, `missionComplete` and `won` live on `state.outcome`, and
@@ -92,7 +93,14 @@ Node.js >= 18 is required (the tests use the built-in `node:test` runner).
   passed mission). At five stars police must actually catch the player to bust
   them. `src/ui/storage.js` persists the best score/cash in `localStorage` with
   an in-memory fallback, and the HUD shows the objective, outcome and best run.
-- Audio arrives in a later task and is never committed directly to `main`.
+- T11 (this task): `src/ui/audio.js` - procedural Web Audio cues (oscillator +
+  gain envelopes, **no audio files**) with a pure `cueFor(event)` mapping every
+  game event to a cue; audio unlocks on the first pointer/key gesture and `M`
+  mutes. `P` pauses (the simulation freezes and resumes without a time jump),
+  and a title screen / game-over overlay make the run reachable and restartable
+  with `Enter` or `Space`. HUD polish adds a mission prompt pill, a wanted-count
+  label and a red hit-flash vignette.
+- Nothing is ever committed directly to `main`.
 
 ## Contributing
 
