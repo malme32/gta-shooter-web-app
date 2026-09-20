@@ -232,18 +232,20 @@ test('restart respawns the squad and clears loot and cash', () => {
   const map = createMap({ width: 60, height: 60, seed: 4 });
   const game = createGame({ map, seed: 4 });
   const total = game.enemies.length;
+  const initialPickups = game.pickups.length;
 
   game.enemies.pop();
-  game.pickups.push(createPickup({ id: 9, pickupType: 'cash', amount: 10, x: 0, y: 0 }));
+  game.pickups.push(createPickup({ id: 999, pickupType: 'cash', amount: 10, x: 0, y: 0 }));
   game.cash = 500;
-  game.nextPickupId = 10;
+  game.nextPickupId = 1000;
 
   restart(game);
 
   assert.equal(game.enemies.length, total);
-  assert.equal(game.pickups.length, 0);
+  assert.equal(game.pickups.length, initialPickups, 'dropped loot is cleared and map pickups restored');
+  assert.ok(!game.pickups.some((pickup) => pickup.id === 999), 'dropped loot must be gone');
   assert.equal(game.cash, 0);
-  assert.equal(game.nextPickupId, 1);
+  assert.equal(game.nextPickupId, initialPickups + 1);
   assert.deepEqual(game.enemies.map((enemy) => enemy.id), Array.from({ length: total }, (_, i) => i + 1));
 });
 

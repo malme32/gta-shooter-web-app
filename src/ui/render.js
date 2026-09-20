@@ -57,6 +57,7 @@ export const ENTITY_SPRITES = Object.freeze({
   police: Object.freeze({ shape: 'person', radius: 11, color: '#60a5fa', outline: '#1e3a8a' }),
   bullet: Object.freeze({ shape: 'bullet', radius: 4, color: '#fde047', outline: '#a16207' }),
   pickup: Object.freeze({ shape: 'pickup', radius: 9, color: '#a3e635', outline: '#3f6212' }),
+  mission: Object.freeze({ shape: 'mission', radius: 22, color: '#facc15', outline: '#a16207' }),
   default: Object.freeze({ shape: 'circle', radius: 10, color: '#94a3b8', outline: '#334155' }),
 });
 
@@ -199,6 +200,19 @@ function collectEntities(game) {
   if (Array.isArray(game?.pickups)) entities.push(...game.pickups);
   if (Array.isArray(game?.entities)) entities.push(...game.entities);
   if (Array.isArray(game?.bullets)) entities.push(...game.bullets);
+  // A `reach` mission draws a marker at its destination; an eliminate mission
+  // has no world position to mark.
+  const mission = game?.mission;
+  if (mission && mission.objective === 'reach' && mission.status !== 'complete') {
+    entities.push({
+      id: `mission-marker-${mission.id}`,
+      kind: 'mission',
+      x: mission.x,
+      y: mission.y,
+      radius: Number.isFinite(mission.radius) ? mission.radius : 22,
+      alive: true,
+    });
+  }
   return entities;
 }
 
@@ -393,6 +407,20 @@ function drawPickup(ctx, sprite) {
   ctx.restore();
 }
 
+function drawMission(ctx, sprite) {
+  const { radius, color } = sprite;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.save();
+  ctx.rotate(Math.PI / 4);
+  ctx.fillRect(-radius * 0.45, -radius * 0.45, radius * 0.9, radius * 0.9);
+  ctx.restore();
+}
+
 function drawCircle(ctx, sprite) {
   const { radius, color, outline } = sprite;
   ctx.fillStyle = color;
@@ -431,6 +459,9 @@ export function drawEntity(ctx, entity) {
       break;
     case 'pickup':
       drawPickup(ctx, sprite);
+      break;
+    case 'mission':
+      drawMission(ctx, sprite);
       break;
     default:
       drawCircle(ctx, sprite);

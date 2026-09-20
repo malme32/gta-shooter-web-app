@@ -23,15 +23,13 @@ import {
   VEHICLE_EXPLOSION_HEAT,
 } from './constants.js';
 import { createRng } from './rng.js';
-import { clamp, circlesOverlap, lerp as lerpVec } from './geometry.js';
+import { clamp, lerp as lerpVec } from './geometry.js';
 import { clampCamera, cameraFollowTarget } from './map.js';
 import {
   createPlayer,
   movePlayer as movePlayerEntity,
   aimAt,
   isAlive as isPlayerAlive,
-  healPlayer,
-  addArmour,
 } from './player.js';
 import {
   weaponSpec,
@@ -53,7 +51,16 @@ import {
   runOverDamageTick,
   explodeVehicle,
 } from './vehicle.js';
-import { ENEMY_TYPE_IDS, createEnemy, isEnemyAlive, isPolice, enemySpec, rollLoot, createPickup } from './enemy.js';
+import { ENEMY_TYPE_IDS, createEnemy, isEnemyAlive, isPolice, enemySpec, rollLoot } from './enemy.js';
+import { createPickup, applyPickup as applyPickupToPlayer, pickupOverlaps, PICKUP_TYPES, defaultPickupAmount } from './pickup.js';
+import {
+  createMission,
+  activateMission,
+  recordElimination,
+  updateMission,
+  missionProgress,
+  MISSION_DEFAULT_REWARD,
+} from './mission.js';
 import { aiTick } from './ai.js';
 import {
   wantedLevelFor,
@@ -64,8 +71,28 @@ import {
   policeSpawnPoint,
   isBusted,
   sirenActiveFor,
+  findCapturingOfficer,
   WANTED_DECAY_COOLDOWN_TICKS,
 } from './wanted.js';
+
+/**
+ * Terminal run outcomes. `null` means the run is still live. Every non-null
+ * outcome sets `gameOver` and can be cleared by {@link restart}.
+ *
+ * `missionComplete` means a mission was passed but the campaign continues after
+ * a restart; `won` means the final mission was passed.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const GAME_OUTCOMES = Object.freeze({
+  WASTED: 'wasted',
+  BUSTED: 'busted',
+  MISSION_COMPLETE: 'missionComplete',
+  WON: 'won',
+});
+
+/** Score added to the run score for each hostile defeated. */
+export const SCORE_PER_KILL = 10;
 
 /**
  * @typedef {object} GameInput
@@ -124,6 +151,11 @@ import {
  * @property {boolean} busted Whether the 5-star terminal state was reached.
  * @property {number} sirenLevel Wanted level described by the last siren event.
  * @property {boolean} sirenActive Whether the siren is currently sounding.
+ * @property {object[]} missions Campaign mission specs, in order.
+ * @property {number} missionIndex Index of the mission `restart` will activate.
+ * @property {object|null} mission The currently active mission.
+ * @property {number} kills Hostiles defeated this run (score input).
+ * @property {string|null} outcome Terminal outcome (see {@link GAME_OUTCOMES}).
  * @property {boolean} gameOver
  * @property {boolean} paused
  */
@@ -143,6 +175,7 @@ function emptyInput() {
     cycleWeapon: 0,
     enter: false,
     handbrake: false,
+    restart: false,
     pointerX: null,
     pointerY: null,
   };
@@ -270,6 +303,113 @@ function spawnEnemies(state) {
   return state.enemies;
 }
 
+/**
+ * Build the campaign's mission specs from the map. An explicit `map.missions`
+ * array wins; otherwise the map's `spawns.missionSpawns` become `reach`
+ * objectives preceded by an `eliminate` objective sized to the enemy squad.
+ * A map with neither gets no campaign, so plain test maps keep behaving as
+ * before.
+ *
+ * @param {object} map
+ * @returns {Array<object>}
+ */
+function campaignSpecs(map) {
+  if (Array.isArray(map?.missions)) return map.missions;
+  const spawns = Array.isArray(map?.spawns?.missionSpawns) ? map.spawns.missionSpawns : [];
+  if (spawns.length === 0) return [];
+
+  const specs = [
+    {
+      id: 'mission-1',
+      name: 'Clear the block',
+      objective: 'eliminate',
+      targetCount: Math.max(1, Math.min(enemySpawnPoints(map).length || 3, 12)),
+      reward: MISSION_DEFAULT_REWARD,
+    },
+  ];
+  spawns.forEach((point, index) => {
+    specs.push({
+      id: `mission-${index + 2}`,
+      name: `Reach checkpoint ${index + 1}`,
+      objective: 'reach',
+      x: point.x,
+      y: point.y,
+      reward: MISSION_DEFAULT_REWARD,
+    });
+  });
+  return specs;
+}
+
+/**
+ * Build a fresh mission list from the state's specs. Ids and targets are
+ * regenerated on every restart so a completed mission cannot stay complete.
+ *
+ * @param {GameState} state
+ * @returns {object[]}
+ */
+function buildMissions(state) {
+  const specs = Array.isArray(state.missionSpecs) ? state.missionSpecs : [];
+  return specs.map((spec, index) => {
+    const { id, ...rest } = spec ?? {};
+    return createMission({ id: id ?? `mission-${index + 1}`, ...rest });
+  });
+}
+
+/**
+ * Reset the campaign to `index` and activate that mission (if any), emitting a
+ * `mission_start` event.
+ *
+ * @param {GameState} state
+ * @param {number} [index=0]
+ */
+function resetMissions(state, index = 0) {
+  state.missions = buildMissions(state);
+  const clamped =
+    Number.isFinite(index) && index >= 0 && index < state.missions.length ? Math.floor(index) : 0;
+  state.missionIndex = clamped;
+  state.mission = state.missions[clamped] ?? null;
+  if (!state.mission) return;
+
+  activateMission(state.mission);
+  emitEvent(state, 'mission_start', {
+    missionId: state.mission.id,
+    name: state.mission.name,
+    objective: state.mission.objective,
+    targetCount: state.mission.targetCount,
+    reward: state.mission.reward,
+    x: state.mission.x,
+    y: state.mission.y,
+    radius: state.mission.radius,
+  });
+}
+
+/**
+ * Place the map's named health/armour/ammo/cash pickups on the ground, cycling
+ * through the pickup types so every effect is reachable. Ids are stable across
+ * a restart.
+ *
+ * @param {GameState} state
+ */
+function resetPickups(state) {
+  state.pickups = [];
+  state.nextPickupId = 1;
+  const spawns = Array.isArray(state.map?.spawns?.pickupSpawns) ? state.map.spawns.pickupSpawns : [];
+  for (const point of spawns) {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+    const pickupType = PICKUP_TYPES[state.pickups.length % PICKUP_TYPES.length];
+    state.pickups.push(
+      createPickup({
+        id: state.nextPickupId,
+        pickupType,
+        amount: defaultPickupAmount(pickupType),
+        x: point.x,
+        y: point.y,
+      }),
+    );
+    state.nextPickupId += 1;
+  }
+}
+
 function resetPlayer(state) {
   state.player = createPlayer({ id: 0, x: state.spawn.x, y: state.spawn.y });
 }
@@ -331,9 +471,11 @@ function resetVehicles(state) {
  * @param {{ x?: number, y?: number }} [options.deadZone] Camera dead-zone half extents.
  * @param {Array<{ id?: number|string, x: number, y: number, angle?: number }>} [options.vehicles]
  *   Explicit vehicle spawns; when omitted the map's `spawns.vehicleSpawns` are used.
+ * @param {Array<object>} [options.missions] Explicit campaign specs; when
+ *   omitted the map's `missions` (or `spawns.missionSpawns`) are used.
  * @returns {GameState}
  */
-export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles } = {}) {
+export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles, missions } = {}) {
   const grid = normalizeGrid(map);
   const resolvedRng = resolveRng(rng, seed);
   let numericSeed = null;
@@ -375,6 +517,12 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles
     busted: false,
     sirenLevel: 0,
     sirenActive: false,
+    missions: [],
+    missionIndex: 0,
+    mission: null,
+    missionSpecs: Array.isArray(missions) ? missions : campaignSpecs(map),
+    kills: 0,
+    outcome: null,
     gameOver: false,
     paused: false,
     spawn: spawnPoint,
@@ -384,6 +532,8 @@ export function createGame({ map, spawn, rng, seed, viewport, deadZone, vehicles
   resetCamera(state);
   resetVehicles(state);
   spawnEnemies(state);
+  resetPickups(state);
+  resetMissions(state, 0);
   return state;
 }
 
@@ -403,14 +553,16 @@ export function restart(state) {
   if (!state || typeof state !== 'object') {
     throw new TypeError('restart requires a game state');
   }
+  // A passed mission advances the campaign; a win starts it over. Deaths and
+  // arrests replay the mission the run was on.
+  const previousOutcome = state.outcome;
   state.tick = 0;
   state.accumulator = 0;
   state.bullets.length = 0;
   state.nextBulletId = 0;
   state.targets.length = 0;
-  if (Array.isArray(state.pickups)) state.pickups.length = 0;
-  state.nextPickupId = 1;
   state.cash = 0;
+  state.kills = 0;
   state.events = [];
   state.heat = 0;
   state.wanted = 0;
@@ -419,6 +571,7 @@ export function restart(state) {
   state.busted = false;
   state.sirenLevel = 0;
   state.sirenActive = false;
+  state.outcome = null;
   state.gameOver = false;
   state.paused = false;
   if (state.input) {
@@ -433,6 +586,8 @@ export function restart(state) {
   resetCamera(state);
   resetVehicles(state);
   spawnEnemies(state);
+  resetPickups(state);
+  resetMissions(state, previousOutcome === GAME_OUTCOMES.WON ? 0 : state.missionIndex);
   return state;
 }
 
@@ -463,6 +618,19 @@ export function drainEvents(state) {
   const events = state.events;
   state.events = [];
   return events;
+}
+
+/**
+ * Run score: cash banked plus a bounty per hostile defeated. The HUD and the
+ * best-score store both read this, so the number has one definition.
+ *
+ * @param {GameState} state
+ * @returns {number}
+ */
+export function computeScore(state) {
+  const cash = Number.isFinite(state?.cash) ? Math.max(0, Math.trunc(state.cash)) : 0;
+  const kills = Number.isFinite(state?.kills) ? Math.max(0, Math.trunc(state.kills)) : 0;
+  return cash + kills * SCORE_PER_KILL;
 }
 
 /**
@@ -802,6 +970,11 @@ function reapEnemies(state) {
       y: enemy.y,
     });
 
+    state.kills += 1;
+    if (state.mission) {
+      recordElimination(state.mission, { type: enemy.type, police: isPolice(enemy) });
+    }
+
     const loot = rollLoot(state.rng, enemy.type);
     if (!loot) continue;
     const pickup = createPickup({
@@ -827,38 +1000,10 @@ function reapEnemies(state) {
 }
 
 /**
- * Apply a collected pickup to the game state and return what happened.
- *
- * @param {GameState} state
- * @param {object} pickup
- * @returns {{ pickupType: string, amount: number }}
- */
-function applyPickup(state, pickup) {
-  const amount = Number.isFinite(pickup.amount) ? pickup.amount : 0;
-  switch (pickup.pickupType) {
-    case 'health':
-      healPlayer(state.player, amount);
-      break;
-    case 'armour':
-      addArmour(state.player, amount);
-      break;
-    case 'ammo':
-      state.player.reserve += amount;
-      if (state.player.weapons?.[state.player.weapon]) {
-        state.player.weapons[state.player.weapon].reserve = state.player.reserve;
-      }
-      break;
-    case 'cash':
-    default:
-      state.cash += amount;
-      break;
-  }
-  return { pickupType: pickup.pickupType, amount };
-}
-
-/**
- * Let the player walk over pickups lying on the ground, applying their effect
- * and emitting a `pickup` event. Dead pickups are compacted out in place.
+ * Let the player walk over pickups lying on the ground. Each collection is
+ * applied through `core/pickup.js`, cash is banked on the game state and a
+ * `pickup` event is emitted. Collected pickups are compacted out in place; a
+ * pickup that could not be applied (no live player) is left on the ground.
  *
  * @param {GameState} state
  */
@@ -870,37 +1015,103 @@ function updatePickups(state) {
   for (let i = 0; i < pickups.length; i += 1) {
     const pickup = pickups[i];
     if (!pickup || pickup.alive === false) continue;
-    const overlaps = circlesOverlap(
-      { x: state.player.x, y: state.player.y, r: state.player.radius },
-      { x: pickup.x, y: pickup.y, r: pickup.radius },
-    );
-    if (overlaps) {
-      const applied = applyPickup(state, pickup);
-      pickup.alive = false;
-      emitEvent(state, 'pickup', {
-        pickupId: pickup.id,
-        pickupType: applied.pickupType,
-        amount: applied.amount,
-        x: pickup.x,
-        y: pickup.y,
-      });
+
+    if (!pickupOverlaps(pickup, state.player)) {
+      pickups[write++] = pickup;
       continue;
     }
-    pickups[write++] = pickup;
+
+    const applied = applyPickupToPlayer(state.player, pickup);
+    if (!applied.applied) {
+      pickups[write++] = pickup;
+      continue;
+    }
+
+    if (applied.cash) state.cash += applied.cash;
+    pickup.alive = false;
+    emitEvent(state, 'pickup', {
+      pickupId: pickup.id,
+      pickupType: applied.pickupType,
+      amount: applied.amount,
+      cash: applied.cash,
+      x: pickup.x,
+      y: pickup.y,
+    });
   }
 
   pickups.length = write;
 }
 
 /**
- * Flag game over once the player has died.
+ * Set the run's terminal outcome. The first terminal state wins, so a mission
+ * completion and a death on the same tick cannot both claim the run; the
+ * `gameOver` flag is kept in agreement with `outcome`.
+ *
+ * @param {GameState} state
+ * @param {string} outcome One of {@link GAME_OUTCOMES}.
+ * @returns {string|null} The outcome in force after the call.
+ */
+function setOutcome(state, outcome) {
+  if (state.outcome !== null) return state.outcome;
+  state.outcome = outcome;
+  state.gameOver = true;
+  return state.outcome;
+}
+
+/**
+ * Is the run still live (no terminal outcome yet)?
+ *
+ * @param {GameState} state
+ * @returns {boolean}
+ */
+function isRunLive(state) {
+  return state.outcome === null;
+}
+
+/**
+ * Flag game over once the player has died. Death is the `wasted` terminal
+ * state; it emits both the legacy `player_death` and the `wasted` event.
  *
  * @param {GameState} state
  */
 function updatePlayerDeath(state) {
-  if (!isPlayerAlive(state.player)) {
-    if (!state.gameOver) emitEvent(state, 'player_death', { x: state.player.x, y: state.player.y });
-    state.gameOver = true;
+  if (isPlayerAlive(state.player)) return;
+  if (!isRunLive(state)) return;
+  emitEvent(state, 'player_death', { x: state.player.x, y: state.player.y });
+  emitEvent(state, 'wasted', { x: state.player.x, y: state.player.y });
+  setOutcome(state, GAME_OUTCOMES.WASTED);
+}
+
+/**
+ * Advance the active mission: cash in any completed objective and move the
+ * campaign on. Completing the final mission wins the run; completing an earlier
+ * one ends the run in the `missionComplete` state so `restart` can resume the
+ * campaign at the next mission.
+ *
+ * @param {GameState} state
+ */
+function updateMissions(state) {
+  if (!state.mission || !isRunLive(state)) return;
+
+  const result = updateMission(state.mission, state.player);
+  if (!result.completed) return;
+
+  state.cash += result.reward;
+  const progress = missionProgress(state.mission);
+  emitEvent(state, 'mission_complete', {
+    missionId: progress.id,
+    name: progress.name,
+    objective: progress.objective,
+    reward: result.reward,
+    cash: state.cash,
+  });
+
+  const nextIndex = state.missionIndex + 1;
+  if (nextIndex < state.missions.length) {
+    state.missionIndex = nextIndex;
+    setOutcome(state, GAME_OUTCOMES.MISSION_COMPLETE);
+  } else {
+    setOutcome(state, GAME_OUTCOMES.WON);
   }
 }
 
@@ -1020,10 +1231,17 @@ function updateSiren(state) {
  * @param {GameState} state
  */
 function updateBusted(state) {
-  if (state.busted || !isBusted(state.wanted)) return;
+  if (state.busted || !isBusted(state.wanted) || !isRunLive(state)) return;
+  const officer = findCapturingOfficer(state.player, state.enemies);
+  if (!officer) return;
   state.busted = true;
-  emitEvent(state, 'busted', { level: state.wanted, x: state.player.x, y: state.player.y });
-  state.gameOver = true;
+  emitEvent(state, 'busted', {
+    level: state.wanted,
+    officerId: officer.id,
+    x: state.player.x,
+    y: state.player.y,
+  });
+  setOutcome(state, GAME_OUTCOMES.BUSTED);
 }
 
 /**
@@ -1256,6 +1474,7 @@ export function update(state) {
 
   updateBullets(state);
   reapEnemies(state);
+  updateMissions(state);
   updatePickups(state);
   updatePlayerDeath(state);
   updateCamera(state);

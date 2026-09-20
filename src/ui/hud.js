@@ -16,6 +16,7 @@
 
 import { WEAPONS } from '../core/constants.js';
 import { clamp } from '../core/geometry.js';
+import { missionLabel } from '../core/mission.js';
 
 /** HUD palette. Kept local so the HUD theme is tweakable in one place. */
 export const HUD_COLORS = Object.freeze({
@@ -35,7 +36,38 @@ export const HUD_COLORS = Object.freeze({
   sirenOff: 'rgba(148, 163, 184, 0.25)',
   cash: '#4ade80',
   danger: '#ef4444',
+  mission: '#facc15',
+  outcomeWin: '#4ade80',
+  outcomeLose: '#ef4444',
 });
+
+/** Terminal-outcome banner copy, keyed by the core outcome id. */
+export const OUTCOME_LABELS = Object.freeze({
+  wasted: 'WASTED',
+  busted: 'BUSTED',
+  missionComplete: 'MISSION PASSED',
+  won: 'YOU WIN',
+});
+
+/**
+ * Human-readable banner text for a terminal outcome (`''` when still live).
+ *
+ * @param {string|null} [outcome]
+ * @returns {string}
+ */
+export function outcomeLabel(outcome) {
+  return OUTCOME_LABELS[outcome] ?? '';
+}
+
+/**
+ * Colour for a terminal-outcome banner.
+ *
+ * @param {string|null} [outcome]
+ * @returns {string}
+ */
+export function outcomeColor(outcome) {
+  return outcome === 'wasted' || outcome === 'busted' ? HUD_COLORS.outcomeLose : HUD_COLORS.outcomeWin;
+}
 
 /** Default HUD metrics shown until the corresponding systems exist. */
 export const HUD_DEFAULTS = Object.freeze({
@@ -399,6 +431,36 @@ export function renderHud(ctx, game, size) {
   if (layout.wantedVisible) {
     drawWanted(ctx, layout.wanted, wanted);
   }
+
+  const objective = missionLabel(game.mission);
+  if (objective) {
+    drawLabel(ctx, objective, layout.width / 2, layout.health.y + layout.health.height / 2, {
+      color: HUD_COLORS.mission,
+      font: 14,
+      align: 'center',
+    });
+  }
+
+  const best = game.best;
+  if (best && (best.cash > 0 || best.score > 0)) {
+    drawLabel(
+      ctx,
+      `BEST ${formatCash(best.cash)} · ${Math.round(best.score)}`,
+      layout.cash.x + layout.cash.width,
+      layout.cash.y - 4,
+      { color: HUD_COLORS.muted, font: 11, align: 'right', baseline: 'bottom' },
+    );
+  }
+
+  const banner = outcomeLabel(game.outcome);
+  if (banner) {
+    drawLabel(ctx, banner, layout.width / 2, layout.height / 2, {
+      color: outcomeColor(game.outcome),
+      font: 34,
+      align: 'center',
+    });
+  }
+
   ctx.restore();
 
   return layout;
