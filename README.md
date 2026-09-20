@@ -97,8 +97,9 @@ seconds, so behaviour is independent of the render rate.
 
 ### Weapons
 
-Weapon tuning is the `WEAPONS` table. `fireDelayTicks`, `reloadTicks` and
-`spread` are all tick-based. Player-selectable slots are `1`/`2`/`3`
+Weapon tuning is the `WEAPONS` table. `fireDelayTicks` and `reloadTicks` are
+tick counts; `spreadRad` is a half-angle in radians (not a tick count).
+Player-selectable slots are `1`/`2`/`3`
 (`WEAPON_SLOTS`); a `rifle` is defined in the table for reuse but has no number
 key.
 
@@ -217,9 +218,10 @@ campaign at the next mission; completing the final mission wins the run.
 ### Pickups and loot
 
 Pickups are `health`, `armour`, `ammo` or `cash` with defaults 25 / 25 / 60 / 50
-and a 10 px collection radius. Health, armour and ammo are clamped to their
-ceilings; cash is banked on the game state. Map pickup spawns cycle through the
-types, and dead enemies roll their archetype's weighted loot table (chance plus
+and a 10 px collection radius. Health and armour clamp to their ceilings; ammo
+adds to the reserve (uncapped); cash is banked on the game state. Map pickup
+spawns cycle through the types, and dead enemies roll their archetype's weighted
+loot table (chance plus
 a weighted type table with amount ranges), so a seeded run always drops the same
 loot. Unknown pickup types fall back to cash.
 
