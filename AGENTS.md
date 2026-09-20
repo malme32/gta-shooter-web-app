@@ -35,9 +35,11 @@ Instructions for agents and contributors working in this repository.
   - `render.js` - camera-transform world rendering with procedural sprites (no
     external assets).
   - `hud.js` - health/armour/ammo/weapon/wanted/cash/objective HUD.
+  - `audio.js` - procedural Web Audio cues with a pure `cueFor(event)` mapping.
   - `storage.js` - best-score persistence with an in-memory fallback.
-- `src/main.js` - bootstrap; wires `src/core` and `src/ui` together and owns the
-  `requestAnimationFrame` loop.
+- `src/main.js` - bootstrap; wires `src/core` and `src/ui` together, owns the
+  `requestAnimationFrame` loop and drives the title/pause/game-over overlay
+  phase.
 - `test/` - Node unit tests using the built-in `node:test` runner.
 - `.github/workflows/ci.yml` - CI; runs the test suite on every push and PR.
 - `.github/pull_request_template.md` - pull request checklist.

@@ -2,10 +2,10 @@
  * Best-run persistence.
  *
  * The game remembers the best score and the biggest cash pile across reloads in
- * `localStorage`. `localStorage` is a browser API, which is why this module
- * lives in `src/ui/` rather than the pure core; every function still takes an
- * injectable storage object so it can be unit tested under Node with an
- * in-memory stand-in.
+ * `localStorage`, along with the sticky mute preference. `localStorage` is a
+ * browser API, which is why this module lives in `src/ui/` rather than the pure
+ * core; every function still takes an injectable storage object so it can be
+ * unit tested under Node with an in-memory stand-in.
  *
  * Robustness is the whole point: a missing `localStorage` (Node, private mode,
  * disabled storage) falls back to an in-memory store, and malformed or
@@ -16,6 +16,12 @@
 
 /** `localStorage` key holding the best record. */
 export const BEST_RECORD_KEY = 'gta-shooter:best';
+
+/** `localStorage` key holding the sticky mute preference. */
+export const MUTED_KEY = 'gta-shooter:muted';
+
+/** Stored value that means "muted"; anything else (or nothing) means "on". */
+const MUTED_TRUE = 'true';
 
 /**
  * @typedef {object} BestRecord
@@ -129,6 +135,40 @@ export function writeBest(storage, record) {
   const store = resolveStorage(storage);
   try {
     store.setItem(BEST_RECORD_KEY, JSON.stringify(normaliseRecord(record)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read the sticky mute preference. Missing or corrupt values default to sound
+ * on (`false`), matching a fresh session.
+ *
+ * @param {object} [storage] Explicit storage; defaults to the resolved one.
+ * @returns {boolean}
+ */
+export function readMuted(storage) {
+  const store = resolveStorage(storage);
+  try {
+    return store.getItem(MUTED_KEY) === MUTED_TRUE;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Persist the mute preference. Returns `false` (without throwing) when storage
+ * refuses the write, so callers can ignore persistence failures.
+ *
+ * @param {object} [storage]
+ * @param {boolean} muted
+ * @returns {boolean}
+ */
+export function writeMuted(storage, muted) {
+  const store = resolveStorage(storage);
+  try {
+    store.setItem(MUTED_KEY, muted ? MUTED_TRUE : 'false');
     return true;
   } catch {
     return false;

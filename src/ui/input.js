@@ -38,6 +38,8 @@ export const KEY_ACTIONS = Object.freeze({
   Digit3: 'weapon3',
   Numpad3: 'weapon3',
   KeyE: 'enter',
+  KeyM: 'mute',
+  KeyP: 'pause',
   Enter: 'restart',
   NumpadEnter: 'restart',
 });
@@ -50,6 +52,15 @@ export const KEY_ACTIONS = Object.freeze({
 export const DERIVED_KEYS = Object.freeze({
   Space: 'handbrake',
 });
+
+/**
+ * Keys whose **fresh** keydown acts as a UI confirm (start / restart). These set
+ * the one-shot `confirm` field rather than a held flag, so a key that is already
+ * down when a screen appears (for example the trigger held while dying) cannot
+ * immediately dismiss it. `Enter` also maps to the legacy held `restart` field
+ * via {@link KEY_ACTIONS}, but screens must consume `confirm`.
+ */
+export const CONFIRM_KEYS = Object.freeze(['Enter', 'NumpadEnter', 'Space']);
 
 /**
  * @typedef {object} InputIntent
@@ -65,7 +76,13 @@ export const DERIVED_KEYS = Object.freeze({
  * @property {boolean} weapon3
  * @property {number} cycleWeapon Accumulated wheel steps (negative = up).
  * @property {boolean} enter One-shot: enter/exit the nearest vehicle (key `E`).
- * @property {boolean} restart One-shot: restart the run after a terminal state (key `Enter`).
+ * @property {boolean} confirm One-shot: a fresh `Space`/`Enter` press, consumed
+ *   by {@link takeConfirm}. This is what starts and restarts the run; unlike the
+ *   held `restart` flag it can never be triggered by a key that is already down.
+ * @property {boolean} restart Held: legacy alias for `Enter` (kept for callers
+ *   that still poll it); screens should use `confirm` instead.
+ * @property {boolean} pause One-shot: toggle pause (key `P`).
+ * @property {boolean} mute One-shot: toggle mute (key `M`).
  * @property {boolean} handbrake Held while `Space` is down (handbrake while driving).
  * @property {number|null} pointerX Canvas-space pointer x, or `null` when unknown.
  * @property {number|null} pointerY Canvas-space pointer y, or `null` when unknown.
@@ -90,7 +107,10 @@ export function createIntent() {
     weapon3: false,
     cycleWeapon: 0,
     enter: false,
+    confirm: false,
     restart: false,
+    pause: false,
+    mute: false,
     handbrake: false,
     pointerX: null,
     pointerY: null,
@@ -134,6 +154,28 @@ export function applyKey(intent, code, pressed) {
   if (!action) return false;
   intent[action] = Boolean(pressed);
   return true;
+}
+
+/**
+ * Consume the one-shot confirm gesture for this frame.
+ *
+ * The `confirm` flag is set only on a *fresh* `Space`/`Enter` keydown (see
+ * {@link CONFIRM_KEYS}), so a key that is still held — for example the trigger
+ * held while the player dies — never carries over into the next screen. Reading
+ * it clears it, guaranteeing one screen transition per press. An active
+ * `lockout` (seconds) additionally suppresses the gesture, but still consumes
+ * it, so the title/game-over overlay always shows for its minimum time.
+ *
+ * Pure: safe to unit test without a DOM.
+ *
+ * @param {InputIntent} intent
+ * @param {{ lockout?: number }} [options]
+ * @returns {boolean} `true` when a fresh confirm should be honoured.
+ */
+export function takeConfirm(intent, { lockout = 0 } = {}) {
+  const pressed = Boolean(intent?.confirm);
+  if (intent) intent.confirm = false;
+  return pressed && !(Number.isFinite(lockout) && lockout > 0);
 }
 
 /**
@@ -200,12 +242,20 @@ export function createInput({ intent = createIntent(), target = defaultTarget(),
     return { intent, dispose() {} };
   }
 
+  // Track which codes are physically down so OS key-repeat (and repeated
+  // keydown events for a held key) cannot re-arm the one-shot confirm.
+  const held = new Set();
+
   const onKeyDown = (event) => {
+    const repeat = held.has(event.code);
+    held.add(event.code);
+    if (CONFIRM_KEYS.includes(event.code) && !repeat) intent.confirm = true;
     if (applyKey(intent, event.code, true)) event.preventDefault?.();
     const derived = DERIVED_KEYS[event.code];
     if (derived) intent[derived] = true;
   };
   const onKeyUp = (event) => {
+    held.delete(event.code);
     if (applyKey(intent, event.code, false)) event.preventDefault?.();
     const derived = DERIVED_KEYS[event.code];
     if (derived) intent[derived] = false;

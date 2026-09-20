@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   createGame,
   update,
+  advance,
   restart,
   drainEvents,
   addHeat,
@@ -11,6 +12,7 @@ import {
   GAME_OUTCOMES,
   SCORE_PER_KILL,
 } from '../src/core/game.js';
+import { TICK_SECONDS } from '../src/core/constants.js';
 import { createEnemy, killEnemy } from '../src/core/enemy.js';
 import {
   createMemoryStorage,
@@ -18,7 +20,10 @@ import {
   writeBest,
   recordBest,
   normaliseRecord,
+  readMuted,
+  writeMuted,
   BEST_RECORD_KEY,
+  MUTED_KEY,
 } from '../src/ui/storage.js';
 
 function makeMap(width, height, spawns = {}) {
@@ -200,6 +205,24 @@ test('restart resets the world, wanted level, cash and campaign', () => {
   assert.equal(game.mission.status, 'active');
 });
 
+test('pausing freezes the simulation and resuming does not jump time', () => {
+  const game = createGame({ map: makeMap(80, 80), spawn: { x: 400, y: 400 }, seed: 1 });
+  game.input.up = true;
+
+  update(game);
+  const before = { x: game.player.x, y: game.player.y };
+
+  game.paused = true;
+  advance(game, 1);
+  assert.deepEqual({ x: game.player.x, y: game.player.y }, before, 'player is frozen while paused');
+  assert.ok(game.tick > 0, 'ticks still advance so time is well defined');
+  assert.ok(game.accumulator < TICK_SECONDS, 'the accumulator cannot build a backlog while paused');
+
+  game.paused = false;
+  update(game);
+  assert.ok(game.player.y < before.y, 'the player moves again after resuming');
+});
+
 test('computeScore combines cash and kills', () => {
   assert.equal(computeScore({ cash: 100, kills: 3 }), 100 + 3 * SCORE_PER_KILL);
   assert.equal(computeScore(null), 0);
@@ -250,4 +273,33 @@ test('normaliseRecord floors amounts and rejects bad input', () => {
   assert.deepEqual(normaliseRecord({ score: -5, cash: 2.9 }), { score: 0, cash: 2 });
   assert.deepEqual(normaliseRecord({ score: Number.NaN, cash: 'x' }), { score: 0, cash: 0 });
   assert.deepEqual(normaliseRecord(undefined), { score: 0, cash: 0 });
+});
+
+test('the mute preference round-trips and defaults to sound on', () => {
+  const store = createMemoryStorage();
+  assert.equal(readMuted(store), false, 'nothing stored means sound on');
+  assert.equal(store.getItem(MUTED_KEY), null);
+
+  assert.equal(writeMuted(store, true), true);
+  assert.equal(readMuted(store), true, 'mute survives a "reload"');
+
+  assert.equal(writeMuted(store, false), true);
+  assert.equal(readMuted(store), false);
+});
+
+test('corrupt or unavailable storage keeps the game audible without throwing', () => {
+  const corrupt = createMemoryStorage();
+  corrupt.setItem(MUTED_KEY, 'yes please');
+  assert.equal(readMuted(corrupt), false);
+
+  const throwing = {
+    getItem() {
+      throw new Error('storage disabled');
+    },
+    setItem() {
+      throw new Error('storage disabled');
+    },
+  };
+  assert.equal(readMuted(throwing), false);
+  assert.equal(writeMuted(throwing, true), false);
 });

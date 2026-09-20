@@ -57,10 +57,17 @@ canvas.
 | Cycle weapon | mouse wheel |
 | Enter / exit the nearest vehicle | `E` |
 | Handbrake (while driving) | hold `Space` |
-| Restart after a terminal outcome | `Enter` (`NumpadEnter` also works) |
+| Pause / resume | `P` |
+| Mute / unmute audio | `M` |
+| Start the run / restart after a terminal outcome | `Enter` / `NumpadEnter` or `Space` (a fresh press) |
 
 `Space` is context sensitive: it fires while on foot and is the handbrake while
-driving. Arrow keys, `Space` and `Enter` have their browser default suppressed.
+driving. `P` pauses and resumes, and `M` mutes or unmutes (the choice is
+remembered). The run opens on a title screen and shows a game-over overlay on a
+terminal outcome; both are dismissed only by a **fresh** `Enter` or `Space`
+press, so a trigger or key still held at the moment of death cannot skip the
+overlay. Browser default behaviour is suppressed for every mapped key (WASD,
+arrows, `Space`, `Enter`, `R`, `1`/`2`/`3`, `E`, `Shift`, `P`, `M`).
 
 ## Gameplay rules
 
@@ -234,9 +241,25 @@ loot. Unknown pickup types fall back to cash.
   (arrested at five stars), `missionComplete` (a non-final mission passed) or
   `won` (the final mission passed). The first terminal state wins, so a kill and
   a death on the same tick cannot both claim the run.
-- `Enter` calls `restart()`, which rebuilds the world, wanted level and mission
-  list. A win restarts at mission 0; a passed mission resumes at the next one;
-  a death or arrest replays the mission the run was on.
+- A fresh `Enter` or `Space` confirms the game-over overlay, which calls
+  `restart()` and rebuilds the world, wanted level and mission list. A win
+  restarts at mission 0; a passed mission resumes at the next one; a death or
+  arrest replays the mission the run was on.
+
+### Audio, pause and overlays
+
+- `src/ui/audio.js` synthesises every sound with the Web Audio API (oscillator +
+  gain envelopes) — there are **no audio files**. A pure `cueFor(event)` maps
+  each core event to a cue, and `test/audio.test.js` checks that vocabulary
+  against the core's real `emitEvent` sites so it cannot drift.
+- Audio stays silent until the first pointer/key gesture unlocks the
+  `AudioContext`; `M` toggles mute and the preference is persisted next to the
+  best record.
+- `P` pauses: the simulation freezes (`game.paused`) and resumes with no time
+  jump, while the renderer keeps drawing the frozen frame behind the overlay.
+- `src/main.js` owns the presentation `phase` (`title` / `playing` / `paused` /
+  `gameOver`): a title screen gates the start and terminal outcomes raise the
+  game-over overlay.
 
 ## Data model
 
@@ -322,6 +345,7 @@ definition of done in `AGENTS.md`.
   - `input.js` — keyboard/mouse events reduced to a plain intent object.
   - `render.js` — camera-transform world rendering with procedural sprites.
   - `hud.js` — health/armour/ammo/weapon/wanted/cash/objective HUD.
+  - `audio.js` — procedural Web Audio cues with a pure `cueFor(event)` mapping.
   - `storage.js` — best-score persistence with an in-memory fallback.
 - `src/main.js` — bootstrap; wires core and UI together and owns the frame loop.
 - `test/` — Node unit tests (`node:test`), one file per subsystem.
