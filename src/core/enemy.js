@@ -24,6 +24,11 @@
 
 import { clamp } from './geometry.js';
 import { applyBulletDamage } from './bullet.js';
+import { createPickup, PICKUP_RADIUS } from './pickup.js';
+
+// The pickup data type and its factory live in `core/pickup.js`; re-export them
+// here so the enemy loot table and the pickup system share one implementation.
+export { createPickup, PICKUP_RADIUS };
 
 /**
  * @typedef {object} LootDrop
@@ -300,9 +305,6 @@ export function isPolice(enemy) {
   return Boolean(enemy) && enemy.police === true;
 }
 
-/** Pickup collision radius, in world pixels. */
-export const PICKUP_RADIUS = 10;
-
 /**
  * Resolve an archetype id to its spec, falling back to the `thug`.
  *
@@ -467,27 +469,5 @@ export function rollLoot(rng = Math.random, spec = ENEMY_TYPES.thug) {
   return drawLoot(loot.table, rng);
 }
 
-/**
- * Create a pickup at a world position.
- *
- * @param {object} [options]
- * @param {number|string} [options.id=0]
- * @param {LootDrop['type']} [options.pickupType='cash']
- * @param {number} [options.x=0]
- * @param {number} [options.y=0]
- * @param {number} [options.amount=0]
- * @param {number} [options.radius=PICKUP_RADIUS]
- * @returns {Pickup}
- */
-export function createPickup({ id = 0, pickupType = 'cash', x = 0, y = 0, amount = 0, radius = PICKUP_RADIUS } = {}) {
-  return {
-    id,
-    kind: 'pickup',
-    pickupType,
-    x,
-    y,
-    radius,
-    amount: Number.isFinite(amount) ? amount : 0,
-    alive: true,
-  };
-}
+// `createPickup` / `PICKUP_RADIUS` are re-exported at the top of this module
+// from `core/pickup.js`, which owns the single pickup implementation.
