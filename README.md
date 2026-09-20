@@ -271,9 +271,11 @@ important fields:
 - `outcome`, `gameOver`, `paused` — run lifecycle.
 - `events` — a queue drained by `drainEvents()`.
 
-Actor records all carry a stable `id` and a `kind` (`player`, `enemy`,
-`vehicle`, `bullet`, `pickup`), because the renderer matches entities across
-frames by `id` and picks procedural sprites by `kind`.
+Actor records all carry a stable `id`. Core-spawned entities other than the
+player — `enemy`, `vehicle`, `bullet` and `pickup` — also carry a `kind`,
+which the renderer uses to match entities across frames and pick procedural
+sprites. The player record has no `kind`; it is drawn separately by
+`drawPlayer` with `PLAYER_SPRITE`.
 
 ### Events
 
@@ -318,7 +320,7 @@ definition of done in `AGENTS.md`.
   - `hud.js` — health/armour/ammo/weapon/wanted/cash/objective HUD.
   - `storage.js` — best-score persistence with an in-memory fallback.
 - `src/main.js` — bootstrap; wires core and UI together and owns the frame loop.
-- `test/` — Node unit tests (`node:test`), one file per module.
+- `test/` — Node unit tests (`node:test`), one file per subsystem.
 - `.github/workflows/ci.yml` — CI; runs `node --test test/` on every push and PR.
 - `.github/pull_request_template.md` — pull request checklist.
 
